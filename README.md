@@ -50,7 +50,7 @@ Stying's Adhan Bot is a Discord bot designed to provide prayer timings and remin
 4. Run the bot:
    
     ```bash
-    python bot.py
+    python main.py
 
 ## Contributing
 
