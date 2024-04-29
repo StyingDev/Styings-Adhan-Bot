@@ -213,7 +213,8 @@ async def timings(ctx):
         await ctx.send("Please set up your region using A!setup first.")
 
 
-@bot.hybrid_command(name='notify', help='Reminds you to pray for your upcoming salah.')
+
+@bot.hybrid_command(name='notify', help='Reminds you to pray for Fajr, Dhuhr, Asr, and Isha.')
 async def notify(ctx):
     user_id = str(ctx.author.id)
 
@@ -228,17 +229,16 @@ async def notify(ctx):
         async with aiohttp.ClientSession() as session:
             async with session.get(ALADHAN_API_URL, params=params) as response:
                 data = await response.json()
-                timings = data['data']['timings']
+                timings = data.get('data', {}).get('timings', {})
 
                 # Convert timings to the user's local time
                 user_timezone = pytz.timezone(user_settings[user_id]["timezone"])
-                utc = pytz.utc
-                current_time = datetime.datetime.now(utc).astimezone(user_timezone)
+                current_time = datetime.datetime.now(user_timezone)
 
-                formatted_timings = {prayer: time for prayer, time in timings.items()}
+                formatted_timings = {prayer: time for prayer, time in timings.items() if prayer in ["Fajr", "Dhuhr", "Asr", "Isha"]}
 
                 if not formatted_timings:
-                    embed = discord.Embed(title="Notification", description=f"All prayer times for {user_settings[user_id]['city']} have passed for today.", color=EMBED_COLOR)
+                    embed = discord.Embed(title="Notification", description=f"Notification is only available for Fajr, Dhuhr, Asr, and Isha. Please check your settings or try again later.", color=EMBED_COLOR)
                     await ctx.author.send(embed=embed)
                     return
 
@@ -259,18 +259,23 @@ async def notify(ctx):
     else:
         await ctx.author.send("Please set up your region using A!setup first.")
 
-
 async def schedule_notification(user, next_time, next_prayer):
     # Convert next_time to datetime object
     current_date = datetime.date.today()
     notify_time = datetime.datetime.strptime(next_time, '%H:%M')
     notify_datetime = datetime.datetime.combine(current_date, notify_time.time())
 
+    # Calculate the delay until the notification time
+    delay_seconds = (notify_datetime - datetime.datetime.now()).seconds
+
     # Wait until it's time to send the notification
-    await asyncio.sleep((notify_datetime - datetime.datetime.now()).seconds)
+    await asyncio.sleep(delay_seconds)
 
     # Send DM notification
-    await user.send(f"It's time for {next_prayer} in {user_settings[str(user.id)]['city']}!")
+    for _ in range(5):
+        await user.send(f"It's time for {next_prayer} in {user_settings[str(user.id)]['city']}!")
+        await asyncio.sleep(1)
+
 
 
 bot.run(TOKEN)
