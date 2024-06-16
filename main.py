@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import json
 import os
 import aiohttp
@@ -10,7 +10,7 @@ import asyncio
 intents = discord.Intents.all()
 intents.message_content = True
 
-TOKEN = 'Your_token_here'
+TOKEN = 'Your_Discord_Token'
 SETTINGS_FILE = 'user_settings.json'
 ALADHAN_API_URL = 'http://api.aladhan.com/v1/timingsByCity'
 
@@ -42,9 +42,6 @@ if not os.path.exists(SETTINGS_FILE):
 
 with open(SETTINGS_FILE, 'r') as f:
     user_settings = json.load(f)
-
-
-# Rest of your code remains unchanged
 
 # Embed color
 EMBED_COLOR = 0x757e8a
@@ -80,6 +77,7 @@ async def on_ready():
     await bot.change_presence(activity=discord.Game(name="🌲linktr.ee/Stying"))
     await bot.tree.sync()
     print(f'We have logged in as {bot.user.name}')
+    check_notifications.start()
 
 
 bot.remove_command("help")
@@ -152,10 +150,10 @@ async def upcoming(ctx):
                 utc = pytz.utc
                 current_time = datetime.datetime.now(utc).astimezone(user_timezone)
 
-                formatted_timings = {prayer: time for prayer, time in timings.items()}
+                formatted_timings = {prayer: time for prayer, time in timings.items() if prayer in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]}
 
                 if not formatted_timings:
-                    embed = discord.Embed(title="Upcoming Salah", description=f"All prayer times for {user_settings[user_id]['city']} have passed for today.", color=EMBED_COLOR)
+                    embed = discord.Embed(title="Upcoming Salah", description=f"No upcoming salah times found for {user_settings[user_id]['city']}.", color=EMBED_COLOR)
                     await ctx.send(embed=embed)
                     return
 
@@ -213,7 +211,6 @@ async def timings(ctx):
         await ctx.send("Please set up your region using A!setup first.")
 
 
-
 @bot.hybrid_command(name='notify', help='Reminds you to pray for Fajr, Dhuhr, Asr, and Isha.')
 async def notify(ctx):
     user_id = str(ctx.author.id)
@@ -255,27 +252,40 @@ async def notify(ctx):
                 await ctx.send("You have been sent a DM with further details.")
 
                 # Schedule the DM notification
-                await schedule_notification(ctx.author, next_time, next_prayer)
+                bot.loop.create_task(schedule_notification(ctx.author, next_time, next_prayer, user_timezone))
     else:
         await ctx.author.send("Please set up your region using A!setup first.")
 
-async def schedule_notification(user, next_time, next_prayer):
+
+async def schedule_notification(user, next_time, next_prayer, user_timezone):
     # Convert next_time to datetime object
     current_date = datetime.date.today()
-    notify_time = datetime.datetime.strptime(next_time, '%H:%M')
-    notify_datetime = datetime.datetime.combine(current_date, notify_time.time())
+    notify_time = datetime.datetime.strptime(next_time, '%H:%M').time()
+    notify_datetime = datetime.datetime.combine(current_date, notify_time, user_timezone)
 
     # Calculate the delay until the notification time
-    delay_seconds = (notify_datetime - datetime.datetime.now()).seconds
+    delay_seconds = (notify_datetime - datetime.datetime.now(user_timezone)).total_seconds()
+
+    # If the delay is negative, it means the prayer time is for the next day
+    if delay_seconds < 0:
+        delay_seconds += 86400  # Add 24 hours in seconds
 
     # Wait until it's time to send the notification
     await asyncio.sleep(delay_seconds)
 
     # Send DM notification
-    for _ in range(5):
-        await user.send(f"It's time for {next_prayer} in {user_settings[str(user.id)]['city']}!")
-        await asyncio.sleep(1)
+    await user.send(f"It's time for {next_prayer} in {user_settings[str(user.id)]['city']}!")
 
+
+@tasks.loop(minutes=1)
+async def check_notifications():
+    current_time = datetime.datetime.now(pytz.utc).strftime('%H:%M')
+    for user_id, settings in user_settings.items():
+        if "notifications" in settings and settings["notifications"]:
+            user = await bot.fetch_user(int(user_id))
+            for prayer, notify_time in settings["notifications"].items():
+                if current_time == notify_time:
+                    await user.send(f"It's time for {prayer} in {settings['city']}!")
 
 
 bot.run(TOKEN)
