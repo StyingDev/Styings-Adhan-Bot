@@ -35,6 +35,9 @@ timezones = [
     "Asia/Shanghai",
 ]
 
+# Default Asr Calculation Method (University of Islamic Sciences, Karachi)
+DEFAULT_ASR_METHOD = '1'
+
 # Load user settings from JSON file
 if not os.path.exists(SETTINGS_FILE):
     with open(SETTINGS_FILE, 'w') as f:
@@ -66,16 +69,43 @@ class TimeZoneSelect(discord.ui.Select):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+class AsrMethodSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Hanafi juristic (recommended)", value='1'),
+            discord.SelectOption(label="Standard (Shafi'i, Maliki, and Hanbali)", value='0')
+        ]
+        super().__init__(
+            placeholder="Select an Asr timing method",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        user_id = str(interaction.user.id)
+        user_settings[user_id]["asr_method"] = self.values[0]
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump(user_settings, f)
+        embed = discord.Embed(title="Asr Timing Method Set", description=f"Asr timing method has been set to {'Hanafi juristic' if self.values[0] == '1' else 'Standard'}", color=EMBED_COLOR)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 class TimeZoneView(discord.ui.View):
     def __init__(self):
         super().__init__()
         self.add_item(TimeZoneSelect())
 
 
+class AsrMethodView(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+        self.add_item(AsrMethodSelect())
+
+
 @bot.event
 async def on_ready():
     await bot.change_presence(activity=discord.Game(name="🌲linktr.ee/Stying"))
-    await bot.tree.sync()
     print(f'We have logged in as {bot.user.name}')
     check_notifications.start()
 
@@ -95,7 +125,7 @@ async def help(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.hybrid_command(name='setup', help='Setup your region and timezone.')
+@bot.hybrid_command(name='setup', help='Setup your region, timezone, and Asr timing method.')
 async def setup(ctx):
     await ctx.send("Please enter your country:")
     country_msg = await bot.wait_for('message', check=lambda m: m.author == ctx.author)
@@ -105,11 +135,14 @@ async def setup(ctx):
 
     await ctx.send("Please select your timezone:", view=TimeZoneView())
 
+    await ctx.send("What Asr timing method do you want to set?", view=AsrMethodView())
+
     user_id = str(ctx.author.id)
     user_settings[user_id] = {
         "country": country_msg.content,
         "city": city_msg.content,
-        "timezone": None
+        "timezone": None,
+        "asr_method": DEFAULT_ASR_METHOD
     }
     with open(SETTINGS_FILE, 'w') as f:
         json.dump(user_settings, f)
@@ -122,10 +155,11 @@ async def region(ctx):
         country = user_settings[user_id]["country"]
         city = user_settings[user_id]["city"]
         timezone = user_settings[user_id]["timezone"]
-        embed = discord.Embed(title="Current Region Settings", description=f"Country: {country}\nCity: {city}\nTimezone: {timezone}", color=EMBED_COLOR)
+        asr_method = "Hanafi juristic (Recommended)" if user_settings[user_id]["asr_method"] == '1' else "Standard (Shafi'i, Maliki, and Hanbali)"
+        embed = discord.Embed(title="Current Region Settings", description=f"Country: {country}\nCity: {city}\nTimezone: {timezone}\nAsr Method: {asr_method}", color=EMBED_COLOR)
         await ctx.send(embed=embed)
     else:
-        await ctx.send("Please set up your region using A!setup first.")
+        await ctx.send("Please set up your region using /setup first.")
 
 
 @bot.hybrid_command(name='upcoming', help='View your upcoming prayer time.')
@@ -137,7 +171,8 @@ async def upcoming(ctx):
             'city': user_settings[user_id]["city"],
             'country': user_settings[user_id]["country"],
             'method': '2',
-            'timezone': user_settings[user_id]["timezone"]
+            'timezone': user_settings[user_id]["timezone"],
+            'school': user_settings[user_id]["asr_method"]
         }
 
         async with aiohttp.ClientSession() as session:
@@ -166,7 +201,7 @@ async def upcoming(ctx):
                 embed = discord.Embed(title="Next Upcoming Salah", description=f"Next upcoming salah for {user_settings[user_id]['city']} is {next_prayer} at {next_time_12hr}.", color=EMBED_COLOR)
                 await ctx.send(embed=embed)
     else:
-        await ctx.send("Please set up your region using A!setup first.")
+        await ctx.send("Please set up your region using /setup first.")
 
 
 @bot.hybrid_command(name='timings', help='Lists all Prayer timings in your region')
@@ -178,7 +213,8 @@ async def timings(ctx):
             'city': user_settings[user_id]["city"],
             'country': user_settings[user_id]["country"],
             'method': '2',
-            'timezone': user_settings[user_id]["timezone"]
+            'timezone': user_settings[user_id]["timezone"],
+            'school': user_settings[user_id]["asr_method"]
         }
 
         async with aiohttp.ClientSession() as session:
@@ -208,7 +244,8 @@ async def timings(ctx):
                 embed = discord.Embed(title="Adhan Timings", description=description, color=EMBED_COLOR)
                 await ctx.send(embed=embed)
     else:
-        await ctx.send("Please set up your region using A!setup first.")
+        await ctx.send("Please set up your region using /setup first.")
+
 
 
 @bot.hybrid_command(name='notify', help='Reminds you to pray for Fajr, Dhuhr, Asr, and Isha.')
@@ -220,7 +257,8 @@ async def notify(ctx):
             'city': user_settings[user_id]["city"],
             'country': user_settings[user_id]["country"],
             'method': '2',
-            'timezone': user_settings[user_id]["timezone"]
+            'timezone': user_settings[user_id]["timezone"],
+            'school': user_settings[user_id]["asr_method"]
         }
 
         async with aiohttp.ClientSession() as session:
@@ -254,7 +292,7 @@ async def notify(ctx):
                 # Schedule the DM notification
                 bot.loop.create_task(schedule_notification(ctx.author, next_time, next_prayer, user_timezone))
     else:
-        await ctx.author.send("Please set up your region using A!setup first.")
+        await ctx.author.send("Please set up your region using /setup first.")
 
 
 async def schedule_notification(user, next_time, next_prayer, user_timezone):
@@ -289,3 +327,4 @@ async def check_notifications():
 
 
 bot.run(TOKEN)
+
