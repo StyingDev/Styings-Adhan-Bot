@@ -67,7 +67,7 @@ Stying's Adhan Bot is a Discord bot designed to provide prayer timings and remin
 4. Create a '.env' file in the project directory and add your Discord Bot Token:
 
     ```bash
-    DISCORD_TOKEN=your_discord_bot_token_here
+    TOKEN=your_discord_bot_token_here
     ```
 5. Run the bot:
    
