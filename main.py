@@ -272,6 +272,7 @@ async def upcoming(interaction: discord.Interaction):
                 next_time_12hr = datetime.datetime.strptime(next_time, '%H:%M').strftime('%I:%M %p')
 
                 embed = discord.Embed(title="Next Upcoming Salah", description=f"Next upcoming salah for {user_settings[user_id]['city']} is {next_prayer} at {next_time_12hr}.", color=EMBED_COLOR)
+                embed.set_footer(text=f"🕌 Timings for {user_settings[user_id]['city']}")
                 await interaction.response.send_message(embed=embed)
     else:
         await interaction.response.send_message("Please set up your region using /setup first.")
@@ -314,8 +315,10 @@ async def timings(interaction: discord.Interaction):
                 # Convert timings to 12-hour format
                 timings_12hr = {prayer: datetime.datetime.strptime(time, '%H:%M').strftime('%I:%M %p') for prayer, time in timings_to_display.items()}
 
-                description = "\n".join([f"{prayer}: {time}" for prayer, time in timings_12hr.items()])
+                description = "\n".join([f"**{prayer}:** {time}" for prayer, time in timings_12hr.items()])
                 embed = discord.Embed(title="Adhan Timings", description=description, color=EMBED_COLOR)
+                embed.set_footer(text=f"🌙 Timings for {user_settings[user_id]['city']}")
+
                 await interaction.response.send_message(embed=embed)
     else:
         await interaction.response.send_message("Please set up your region using /setup first.")
