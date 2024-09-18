@@ -367,7 +367,13 @@ async def notify(interaction: discord.Interaction):
                 await interaction.user.send(embed=embed)
 
                 # Inform the user that a DM has been sent
-                await interaction.followup.send("You will be notified when it is the time for salah in your direct messages.", ephemeral=True)
+                try:
+                    await interaction.followup.send("You will be notified when it is the time for salah in your direct messages.", ephemeral=True)
+                except discord.HTTPException as e:
+                    if e.status == 429:  # Handle rate limiting
+                        retry_after = int(e.response.headers.get('Retry-After', 1))
+                        await asyncio.sleep(retry_after)
+                        await interaction.followup.send("You will be notified when it is the time for salah in your direct messages.", ephemeral=True)
 
                 # Schedule the DM notification
                 bot.loop.create_task(schedule_notification(interaction.user, next_time, next_prayer, user_timezone))
