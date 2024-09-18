@@ -229,7 +229,7 @@ async def region(interaction: discord.Interaction):
         asr_method = "Hanafi juristic (Recommended)" if user_settings[user_id]["asr_method"] == '1' else "Standard (Shafi'i, Maliki, and Hanbali)"
         calc_method = calculation_methods[user_settings[user_id]["calculation_method"]]
         embed = discord.Embed(title="Current Region Settings", description=f"Country: {country}\nCity: {city}\nTimezone: {timezone}\nAsr Method: {asr_method}\nCalculation Method: {calc_method}", color=EMBED_COLOR)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
         await interaction.response.send_message("Please set up your region using /setup first.")
 
@@ -329,6 +329,9 @@ async def timings(interaction: discord.Interaction):
 async def notify(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
 
+    # Defer the response to give more time for API calls
+    await interaction.response.defer(ephemeral=True)
+
     if user_id in user_settings and user_settings[user_id]["timezone"]:
         params = {
             'city': user_settings[user_id]["city"],
@@ -351,7 +354,7 @@ async def notify(interaction: discord.Interaction):
 
                 if not formatted_timings:
                     embed = discord.Embed(title="Notification", description=f"Notification is only available for Fajr, Dhuhr, Asr, Magrib and Isha. Please check your settings or try again later.", color=EMBED_COLOR)
-                    await interaction.user.send(embed=embed)
+                    await interaction.followup.send(embed=embed)
                     return
 
                 next_prayer = min(formatted_timings, key=lambda x: formatted_timings[x] if current_time.strftime('%H:%M') < formatted_timings[x] else '23:59')
@@ -362,14 +365,14 @@ async def notify(interaction: discord.Interaction):
 
                 embed = discord.Embed(title="Notification Scheduled", description=f"Next upcoming salah for {user_settings[user_id]['city']} is {next_prayer} at {next_time_12hr}. You will be pinged again in DM when it's time.", color=EMBED_COLOR)
                 await interaction.user.send(embed=embed)
-                
+
                 # Inform the user that a DM has been sent
-                await interaction.response.send_message("You will be notified when it is the time for salah in your direct messages.")
+                await interaction.followup.send("You will be notified when it is the time for salah in your direct messages.", ephemeral=True)
 
                 # Schedule the DM notification
                 bot.loop.create_task(schedule_notification(interaction.user, next_time, next_prayer, user_timezone))
     else:
-        await interaction.user.send("Please set up your region using /setup first.")
+        await interaction.followup.send("Please set up your region using /setup first.", ephemeral=True)
 
 
 async def schedule_notification(user, next_time, next_prayer, user_timezone):
