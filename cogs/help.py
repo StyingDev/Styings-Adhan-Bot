@@ -26,6 +26,7 @@ class HelpCog(commands.Cog):
         embed.add_field(name="/notify", value="Schedule a DM notification for the next salah time.", inline=False)
         embed.add_field(name="/notifyloop", value="Set a notification chain for all upcoming salahs.", inline=False)
         embed.add_field(name="/notifyloopstop", value="Stop the notification chain for upcoming salahs.", inline=False)
+        embed.add_field(name="/qibla", value="Get the Qibla direction from your location.", inline=False)
 
         await interaction.response.send_message(embed=embed)
 

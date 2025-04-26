@@ -84,52 +84,45 @@ class NotificationsCog(commands.Cog):
                         data = await response.json()
                         timings = data.get('data', {}).get('timings', {})
                 
-                # 2. Prepare only the 5 daily prayers
-                formatted_timings = {
-                    prayer: time for prayer, time in timings.items()
-                    if prayer in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
-                }
-
-                # 3. Get current time in user's timezone
+                # 2. Prepare only the 5 daily prayers with datetime objects
                 current_time = datetime.datetime.now(user_timezone)
-                current_time_str = current_time.strftime('%H:%M')
-
-                # 4. Find next prayer
-                next_prayer_name = None
-                next_prayer_time = None
+                prayer_times = {}
                 
-                # Sort prayers by their time
-                sorted_prayers = sorted(formatted_timings.items(), key=lambda x: x[1])
+                for prayer in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]:
+                    if prayer in timings:
+                        prayer_time = datetime.datetime.strptime(timings[prayer], '%H:%M').time()
+                        prayer_datetime = datetime.datetime.combine(current_time.date(), prayer_time)
+                        prayer_datetime = prayer_datetime.replace(tzinfo=user_timezone)
+                        
+                        # If prayer time has passed today, schedule for tomorrow
+                        if prayer_datetime <= current_time:
+                            prayer_datetime += datetime.timedelta(days=1)
+                        
+                        prayer_times[prayer] = prayer_datetime
+
+                if not prayer_times:
+                    # No valid prayer times found, wait for 5 minutes before retrying
+                    await asyncio.sleep(300)
+                    continue
+
+                # 3. Find the next prayer (closest future time)
+                next_prayer = min(prayer_times.items(), key=lambda x: x[1])
+                next_prayer_name, next_prayer_time = next_prayer
                 
-                # Find the next prayer that hasn't passed yet
-                for prayer, prayer_time_str in sorted_prayers:
-                    if current_time_str < prayer_time_str:
-                        next_prayer_name = prayer
-                        prayer_time = datetime.datetime.strptime(prayer_time_str, "%H:%M").time()
-                        next_prayer_time = datetime.datetime.combine(current_time.date(), prayer_time).replace(tzinfo=user_timezone)
-                        break
-
-                # If no more prayers today, schedule for tomorrow's first prayer (Fajr)
-                if not next_prayer_name:
-                    tomorrow = current_time + datetime.timedelta(days=1)
-                    first_prayer = sorted_prayers[0]  # First prayer of the day (Fajr)
-                    next_prayer_name = first_prayer[0]
-                    prayer_time = datetime.datetime.strptime(first_prayer[1], "%H:%M").time()
-                    next_prayer_time = datetime.datetime.combine(tomorrow.date(), prayer_time).replace(tzinfo=user_timezone)
-
-                # 5. Calculate seconds until next prayer
+                # 4. Calculate delay (always positive since we handled past prayers above)
                 delay_seconds = (next_prayer_time - current_time).total_seconds()
-
-                if delay_seconds <= 0:
-                    # Log the issue for debugging
-                    print(f"Warning: Negative delay for {user_id}, prayer: {next_prayer_name}, current: {current_time}, prayer time: {next_prayer_time}")
-                    delay_seconds = 60  # fallback in case of weird negative timing
-
-                # 6. Sleep EXACT until next prayer
+                
+                # 5. Add a small buffer to prevent early notifications
+                delay_seconds = max(0, delay_seconds)
+                
+                # 6. Sleep until next prayer
                 await asyncio.sleep(delay_seconds)
-
-                # 7. Send DM notification
-                await user.send(f"It's time for {next_prayer_name} in {self.bot.user_settings[user_id]['city']}!")
+                
+                # 7. Send notification only if the loop is still active
+                if user_id in self.loop_notifications:
+                    await user.send(f"It's time for {next_prayer_name} in {self.bot.user_settings[user_id]['city']}!")
+                    # Add a small delay after sending to prevent spam
+                    await asyncio.sleep(1)
 
         except asyncio.CancelledError:
             # Task was cancelled, clean up
