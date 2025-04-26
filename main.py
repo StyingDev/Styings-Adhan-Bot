@@ -23,22 +23,31 @@ bot = commands.Bot(command_prefix='A!', intents=intents)
 # Predefined list of timezones
 timezones = [
     "America/New_York",
-    "America/Chicago",
+    "America/Chicago", 
     "America/Los_Angeles",
-    "Europe/London",
-    "Europe/Berlin",
-    "Asia/Tokyo",
-    "Australia/Sydney",
-    "Asia/Dhaka",
-    "Asia/Kolkata",
-    "Asia/Dubai",
-    "Africa/Cairo",
-    "Europe/Paris",
     "America/Toronto",
     "America/Mexico_City",
+    "America/Vancouver",
+    "America/Phoenix",
+    "Europe/London",
+    "Europe/Berlin", 
+    "Europe/Paris",
+    "Europe/Madrid",
+    "Europe/Istanbul",
+    "Asia/Tokyo",
     "Asia/Shanghai",
+    "Asia/Singapore", 
+    "Asia/Dubai",
+    "Asia/Riyadh",
+    "Asia/Dhaka",
+    "Asia/Kolkata",
+    "Asia/Jakarta",
+    "Asia/Seoul",
+    "Australia/Sydney",
+    "Africa/Cairo",
+    "Africa/Lagos",
+    "Africa/Johannesburg"
 ]
-
 # Default Asr Calculation Method 
 DEFAULT_ASR_METHOD = '1'
 DEFAULT_CALC_METHOD = '2'
