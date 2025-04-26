@@ -41,18 +41,27 @@ class NotificationsCog(commands.Cog):
         # Convert next_time to datetime object
         current_date = datetime.date.today()
         notify_time = datetime.datetime.strptime(next_time, '%H:%M').time()
-        notify_datetime = datetime.datetime.combine(current_date, notify_time, user_timezone)
-
-        # Calculate the delay until the notification time
+        
+        # Create datetime and properly apply timezone (like in notification_loop)
+        notify_datetime = datetime.datetime.combine(current_date, notify_time).astimezone(user_timezone)
+        
+        # Get current time in user's timezone
         current_time = datetime.datetime.now(user_timezone)
+        
+        # Calculate the delay until the notification time
         delay_seconds = (notify_datetime - current_time).total_seconds()
-
+        
         # If the delay is negative, it means the prayer time is for the next day
         if delay_seconds < 0:
-            delay_seconds += 86400  # Add 24 hours in seconds
-
+            tomorrow = current_date + datetime.timedelta(days=1)
+            notify_datetime = datetime.datetime.combine(tomorrow, notify_time).astimezone(user_timezone)
+            delay_seconds = (notify_datetime - current_time).total_seconds()
+        
         # Wait until it's time to send the notification
         await asyncio.sleep(delay_seconds)
+        
+        # Send DM notification
+        await user.send(f"It's time for {next_prayer} in {self.bot.user_settings[str(user.id)]['city']}!")
 
         # Send DM notification
         await user.send(f"It's time for {next_prayer} in {self.bot.user_settings[str(user.id)]['city']}!")
