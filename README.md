@@ -36,10 +36,8 @@ Stying's Adhan Bot is a Discord bot designed to provide prayer timings and remin
 
 ### Notifications
 - `/notify`: Set a notification for the next upcoming salah.
-
-### Coming Soon(Maybe)
-- `/notifyloop`: Set a notification chain for the next upcoming salahs. (Coming soon)
-- `/notifyloopstop`: stop chain for the next upcoming salahs. (Coming soon)
+- `/notifyloop`: Set a notification chain for the next upcoming salahs. 
+- `/notifyloopstop`: stop chain for the next upcoming salahs.
 
 ## Requirements
 
