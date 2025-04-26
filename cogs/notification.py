@@ -39,11 +39,11 @@ class NotificationsCog(commands.Cog):
 
     async def schedule_notification(self, user, next_time, next_prayer, user_timezone):
         # Convert next_time to datetime object
-        current_date = datetime.date.today()
+        current_date = datetime.datetime.now(user_timezone).date()
         notify_time = datetime.datetime.strptime(next_time, '%H:%M').time()
         
-        # Create datetime and properly apply timezone (like in notification_loop)
-        notify_datetime = datetime.datetime.combine(current_date, notify_time).astimezone(user_timezone)
+        # Create datetime with user's timezone
+        notify_datetime = datetime.datetime.combine(current_date, notify_time).replace(tzinfo=user_timezone)
         
         # Get current time in user's timezone
         current_time = datetime.datetime.now(user_timezone)
@@ -54,17 +54,15 @@ class NotificationsCog(commands.Cog):
         # If the delay is negative, it means the prayer time is for the next day
         if delay_seconds < 0:
             tomorrow = current_date + datetime.timedelta(days=1)
-            notify_datetime = datetime.datetime.combine(tomorrow, notify_time).astimezone(user_timezone)
+            notify_datetime = datetime.datetime.combine(tomorrow, notify_time).replace(tzinfo=user_timezone)
             delay_seconds = (notify_datetime - current_time).total_seconds()
         
         # Wait until it's time to send the notification
         await asyncio.sleep(delay_seconds)
         
-        # Send DM notification
+        # Send DM notification (only once)
         await user.send(f"It's time for {next_prayer} in {self.bot.user_settings[str(user.id)]['city']}!")
 
-        # Send DM notification
-        await user.send(f"It's time for {next_prayer} in {self.bot.user_settings[str(user.id)]['city']}!")
 
     async def notification_loop(self, user, user_timezone):
         """Continuously notify user of upcoming prayers"""
@@ -92,32 +90,39 @@ class NotificationsCog(commands.Cog):
                     if prayer in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
                 }
 
-                # 3. Get current time
+                # 3. Get current time in user's timezone
                 current_time = datetime.datetime.now(user_timezone)
+                current_time_str = current_time.strftime('%H:%M')
 
                 # 4. Find next prayer
                 next_prayer_name = None
                 next_prayer_time = None
-                for prayer, prayer_time_str in formatted_timings.items():
-                    prayer_time = datetime.datetime.strptime(prayer_time_str, "%H:%M").time()
-                    prayer_datetime = datetime.datetime.combine(current_time.date(), prayer_time).astimezone(user_timezone)
-                    if prayer_datetime > current_time:
+                
+                # Sort prayers by their time
+                sorted_prayers = sorted(formatted_timings.items(), key=lambda x: x[1])
+                
+                # Find the next prayer that hasn't passed yet
+                for prayer, prayer_time_str in sorted_prayers:
+                    if current_time_str < prayer_time_str:
                         next_prayer_name = prayer
-                        next_prayer_time = prayer_datetime
+                        prayer_time = datetime.datetime.strptime(prayer_time_str, "%H:%M").time()
+                        next_prayer_time = datetime.datetime.combine(current_time.date(), prayer_time).replace(tzinfo=user_timezone)
                         break
 
-                # If no more prayers today, schedule for tomorrow's Fajr
+                # If no more prayers today, schedule for tomorrow's first prayer (Fajr)
                 if not next_prayer_name:
                     tomorrow = current_time + datetime.timedelta(days=1)
-                    fajr_time_str = formatted_timings.get("Fajr")
-                    fajr_time = datetime.datetime.strptime(fajr_time_str, "%H:%M").time()
-                    next_prayer_name = "Fajr"
-                    next_prayer_time = datetime.datetime.combine(tomorrow.date(), fajr_time).astimezone(user_timezone)
+                    first_prayer = sorted_prayers[0]  # First prayer of the day (Fajr)
+                    next_prayer_name = first_prayer[0]
+                    prayer_time = datetime.datetime.strptime(first_prayer[1], "%H:%M").time()
+                    next_prayer_time = datetime.datetime.combine(tomorrow.date(), prayer_time).replace(tzinfo=user_timezone)
 
                 # 5. Calculate seconds until next prayer
                 delay_seconds = (next_prayer_time - current_time).total_seconds()
 
                 if delay_seconds <= 0:
+                    # Log the issue for debugging
+                    print(f"Warning: Negative delay for {user_id}, prayer: {next_prayer_name}, current: {current_time}, prayer time: {next_prayer_time}")
                     delay_seconds = 60  # fallback in case of weird negative timing
 
                 # 6. Sleep EXACT until next prayer
