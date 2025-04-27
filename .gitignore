@@ -1,2 +1,3 @@
 .env
 user_settings.json
+/cogs/__pycache__
