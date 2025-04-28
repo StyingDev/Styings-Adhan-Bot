@@ -6,36 +6,23 @@ import pytz
 import datetime
 import asyncio
 
-# API URL
 ALADHAN_API_URL = 'http://api.aladhan.com/v1/timingsByCity'
-
-# Embed color
 EMBED_COLOR = 0x757e8a
 
 class NotificationsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.check_notifications.start()
         self.notification_tasks = {}
-        self.loop_notifications = {}  # Store users with active notification loops
-        self.bot.loop.create_task(self.restore_notification_loops())  # Restore loops on startup
+        self.loop_notifications = {}  
+        self.bot.loop.create_task(self.restore_notification_loops())  
 
     def cog_unload(self):
-        self.check_notifications.cancel()
         for task in self.notification_tasks.values():
             task.cancel()
         # Cancel all loop notifications
         for user_id, task in self.loop_notifications.items():
             task.cancel()
 
-    @tasks.loop(minutes=1)
-    async def check_notifications(self):
-        # This is a placeholder for any background notification checking
-        pass
-
-    @check_notifications.before_loop
-    async def before_check_notifications(self):
-        await self.bot.wait_until_ready()
 
     async def schedule_notification(self, user, next_time, next_prayer, user_timezone):
         # Convert next_time to datetime object
@@ -60,8 +47,12 @@ class NotificationsCog(commands.Cog):
         # Wait until it's time to send the notification
         await asyncio.sleep(delay_seconds)
         
-        # Send DM notification (only once)
-        await user.send(f"It's time for {next_prayer} in {self.bot.user_settings[str(user.id)]['city']}!")
+        # Add a 2-minute delay
+        await asyncio.sleep(120)
+        
+        # Send DM notification
+        next_time_12hr = datetime.datetime.strptime(next_time, '%H:%M').strftime('%I:%M %p')
+        await user.send(f"It's time for {next_prayer} in {self.bot.user_settings[str(user.id)]['city']}! at {next_time_12hr}")
 
 
     async def notification_loop(self, user, user_timezone):
@@ -76,7 +67,8 @@ class NotificationsCog(commands.Cog):
                     'country': self.bot.user_settings[user_id]["country"],
                     'method': self.bot.user_settings[user_id]["calculation_method"],
                     'timezone': self.bot.user_settings[user_id]["timezone"],
-                    'school': self.bot.user_settings[user_id]["asr_method"]
+                    'school': self.bot.user_settings[user_id]["asr_method"],
+                    'tune': '0,0,0,0,0,0,0,0,0'
                 }
                 
                 async with aiohttp.ClientSession() as session:
@@ -90,6 +82,7 @@ class NotificationsCog(commands.Cog):
                 
                 for prayer in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]:
                     if prayer in timings:
+                        # Parse the time string from API correctly
                         prayer_time = datetime.datetime.strptime(timings[prayer], '%H:%M').time()
                         prayer_datetime = datetime.datetime.combine(current_time.date(), prayer_time)
                         prayer_datetime = prayer_datetime.replace(tzinfo=user_timezone)
@@ -109,20 +102,39 @@ class NotificationsCog(commands.Cog):
                 next_prayer = min(prayer_times.items(), key=lambda x: x[1])
                 next_prayer_name, next_prayer_time = next_prayer
                 
-                # 4. Calculate delay (always positive since we handled past prayers above)
+                # 4. Calculate delay (always positive since  past prayers was handled above)
+                current_time = datetime.datetime.now(user_timezone)  # Refresh current time
                 delay_seconds = (next_prayer_time - current_time).total_seconds()
                 
                 # 5. Add a small buffer to prevent early notifications
                 delay_seconds = max(0, delay_seconds)
                 
                 # 6. Sleep until next prayer
+                print(f"Waiting {delay_seconds} seconds until {next_prayer_name} at {next_prayer_time.strftime('%I:%M %p')} for {user.name}")
                 await asyncio.sleep(delay_seconds)
+                
+                # Double-check we're at the right time before sending notification
+                current_time = datetime.datetime.now(user_timezone)
+                time_diff = (next_prayer_time - current_time).total_seconds()
+                
+                # If we're more than 30 seconds early, wait the remaining time
+                if time_diff > 30:
+                    print(f"Woke up {time_diff} seconds early, waiting additional time")
+                    await asyncio.sleep(time_diff)
                 
                 # 7. Send notification only if the loop is still active
                 if user_id in self.loop_notifications:
-                    await user.send(f"It's time for {next_prayer_name} in {self.bot.user_settings[user_id]['city']}!")
+                    # Add a 2-minute delay
+                    await asyncio.sleep(120)
+                    
+                    # Format the time in 12-hour format for the message
+                    prayer_time_12hr = next_prayer_time.strftime('%I:%M %p')
+                    await user.send(f"It's time for {next_prayer_name} in {self.bot.user_settings[user_id]['city']}! at {prayer_time_12hr}")
                     # Add a small delay after sending to prevent spam
                     await asyncio.sleep(1)
+                    
+                    # Log the notification for debugging
+                    print(f"Sent {next_prayer_name} notification to {user.name} at {datetime.datetime.now(user_timezone).strftime('%H:%M:%S')}")
 
         except asyncio.CancelledError:
             # Task was cancelled, clean up
@@ -149,7 +161,7 @@ class NotificationsCog(commands.Cog):
 
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    @app_commands.command(name='notify', description='Reminds you to pray two minutes before for Fajr, Dhuhr, Asr, Magrib and Isha.')
+    @app_commands.command(name='notify', description='Reminds you when it is time for Fajr, Dhuhr, Asr, Maghrib and Isha.')
     async def notify(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
 
@@ -162,9 +174,10 @@ class NotificationsCog(commands.Cog):
                 'country': self.bot.user_settings[user_id]["country"],
                 'method': self.bot.user_settings[user_id]["calculation_method"],
                 'timezone': self.bot.user_settings[user_id]["timezone"],
-                'school': self.bot.user_settings[user_id]["asr_method"]
+                'school': self.bot.user_settings[user_id]["asr_method"],
+                'tune': '0,0,0,0,0,0,0,0,0'
             }
-
+            
             async with aiohttp.ClientSession() as session:
                 async with session.get(ALADHAN_API_URL, params=params) as response:
                     data = await response.json()
@@ -174,20 +187,35 @@ class NotificationsCog(commands.Cog):
                     user_timezone = pytz.timezone(self.bot.user_settings[user_id]["timezone"])
                     current_time = datetime.datetime.now(user_timezone)
 
-                    formatted_timings = {prayer: time for prayer, time in timings.items() if prayer in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]}
+                    # Prepare only the 5 daily prayers with datetime objects
+                    prayer_times = {}
+                    
+                    for prayer in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]:
+                        if prayer in timings:
+                            # Parse the time string from API correctly
+                            prayer_time = datetime.datetime.strptime(timings[prayer], '%H:%M').time()
+                            prayer_datetime = datetime.datetime.combine(current_time.date(), prayer_time)
+                            prayer_datetime = prayer_datetime.replace(tzinfo=user_timezone)
+                            
+                            # If prayer time has passed today, schedule for tomorrow
+                            if prayer_datetime <= current_time:
+                                prayer_datetime += datetime.timedelta(days=1)
+                            
+                            prayer_times[prayer] = prayer_datetime
 
-                    if not formatted_timings:
-                        embed = discord.Embed(title="Notification", description=f"Notification is only available for Fajr, Dhuhr, Asr, Magrib and Isha. Please check your settings or try again later.", color=EMBED_COLOR)
+                    if not prayer_times:
+                        embed = discord.Embed(title="Notification", description=f"Notification is only available for Fajr, Dhuhr, Asr, Maghrib and Isha. Please check your settings or try again later.", color=EMBED_COLOR)
                         await interaction.followup.send(embed=embed)
                         return
 
-                    next_prayer = min(formatted_timings, key=lambda x: formatted_timings[x] if current_time.strftime('%H:%M') < formatted_timings[x] else '23:59')
-                    next_time = formatted_timings[next_prayer]
+                    # Find the next prayer (closest future time)
+                    next_prayer = min(prayer_times.items(), key=lambda x: x[1])
+                    next_prayer_name, next_prayer_time = next_prayer
 
-                    # Convert next_time to 12-hour format
-                    next_time_12hr = datetime.datetime.strptime(next_time, '%H:%M').strftime('%I:%M %p')
+                    # Convert to 12-hour format for display
+                    next_time_12hr = next_prayer_time.strftime('%I:%M %p')
 
-                    embed = discord.Embed(title="Notification Scheduled", description=f"Next upcoming salah for {self.bot.user_settings[user_id]['city']} is {next_prayer} at {next_time_12hr}. You will be pinged again in DM when it's time.", color=EMBED_COLOR)
+                    embed = discord.Embed(title="Notification Scheduled", description=f"Next upcoming salah for {self.bot.user_settings[user_id]['city']} is {next_prayer_name} at {next_time_12hr}. You will be pinged again in DM when it's time.", color=EMBED_COLOR)
                     await interaction.user.send(embed=embed)
 
                     # Inform the user that a DM has been sent
@@ -199,12 +227,34 @@ class NotificationsCog(commands.Cog):
                             await asyncio.sleep(retry_after)
                             await interaction.followup.send("You will be notified when it is the time for salah in your direct messages.", ephemeral=True)
 
-                    # Schedule the DM notification
-                    task = self.bot.loop.create_task(self.schedule_notification(interaction.user, next_time, next_prayer, user_timezone))
+                    # Schedule the DM notification using the datetime object
+                    task = self.bot.loop.create_task(self.schedule_notification_datetime(interaction.user, next_prayer_time, next_prayer_name, user_timezone))
                     self.notification_tasks[user_id] = task
         else:
             await interaction.followup.send("Please set up your region using /setup first.", ephemeral=True)
-    
+
+    async def schedule_notification_datetime(self, user, notify_datetime, next_prayer, user_timezone):
+        """Schedule notification using a datetime object instead of a time string"""
+        # Get current time in user's timezone
+        current_time = datetime.datetime.now(user_timezone)
+        
+        # Calculate the delay until the notification time
+        delay_seconds = (notify_datetime - current_time).total_seconds()
+        
+        # Make sure delay is not negative
+        delay_seconds = max(0, delay_seconds)
+        
+        # Wait until it's time to send the notification
+        await asyncio.sleep(delay_seconds)
+        
+        # Add a 2-minute delay
+        await asyncio.sleep(120)
+        
+        # Send DM notification with the time included
+        prayer_time_12hr = notify_datetime.strftime('%I:%M %p')
+        await user.send(f"It's time for {next_prayer} in {self.bot.user_settings[str(user.id)]['city']}! at {prayer_time_12hr}")
+
+
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @app_commands.command(name='notifyloop', description='Set a notification chain for all upcoming salahs.')
@@ -240,7 +290,6 @@ class NotificationsCog(commands.Cog):
             )
             await interaction.user.send(embed=embed)
             
-            # Inform the user that a DM has been sent
             await interaction.followup.send("Prayer notification loop activated. You will be notified for all upcoming salahs in your direct messages.", ephemeral=True)
         else:
             await interaction.followup.send("Please set up your region using `/setup` first.", ephemeral=True)
