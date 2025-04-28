@@ -110,7 +110,6 @@ class NotificationsCog(commands.Cog):
                 delay_seconds = max(0, delay_seconds)
                 
                 # 6. Sleep until next prayer
-                print(f"Waiting {delay_seconds} seconds until {next_prayer_name} at {next_prayer_time.strftime('%I:%M %p')} for {user.name}")
                 await asyncio.sleep(delay_seconds)
                 
                 # Double-check we're at the right time before sending notification
