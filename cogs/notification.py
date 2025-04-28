@@ -78,7 +78,7 @@ class NotificationsCog(commands.Cog):
                     'method': self.bot.user_settings[user_id]["calculation_method"],
                     'timezone': self.bot.user_settings[user_id]["timezone"],
                     'school': self.bot.user_settings[user_id]["asr_method"],
-                    'tune': '0,0,0,0,0,0,0,0,0'
+                    'tune': '0,0,0,0,0,0,0,0,0'  # Add this parameter
                 }
                 
                 async with aiohttp.ClientSession() as session:
@@ -113,13 +113,24 @@ class NotificationsCog(commands.Cog):
                 next_prayer_name, next_prayer_time = next_prayer
                 
                 # 4. Calculate delay (always positive since we handled past prayers above)
+                current_time = datetime.datetime.now(user_timezone)  # Refresh current time
                 delay_seconds = (next_prayer_time - current_time).total_seconds()
                 
                 # 5. Add a small buffer to prevent early notifications
                 delay_seconds = max(0, delay_seconds)
                 
                 # 6. Sleep until next prayer
+                print(f"Waiting {delay_seconds} seconds until {next_prayer_name} at {next_prayer_time.strftime('%I:%M %p')} for {user.name}")
                 await asyncio.sleep(delay_seconds)
+                
+                # Double-check we're at the right time before sending notification
+                current_time = datetime.datetime.now(user_timezone)
+                time_diff = (next_prayer_time - current_time).total_seconds()
+                
+                # If we're more than 30 seconds early, wait the remaining time
+                if time_diff > 30:
+                    print(f"Woke up {time_diff} seconds early, waiting additional time")
+                    await asyncio.sleep(time_diff)
                 
                 # 7. Send notification only if the loop is still active
                 if user_id in self.loop_notifications:
@@ -157,7 +168,7 @@ class NotificationsCog(commands.Cog):
 
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    @app_commands.command(name='notify', description='Reminds you to pray two minutes before for Fajr, Dhuhr, Asr, Magrib and Isha.')
+    @app_commands.command(name='notify', description='Reminds you when it is time for Fajr, Dhuhr, Asr, Maghrib and Isha.')
     async def notify(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
 
@@ -170,9 +181,10 @@ class NotificationsCog(commands.Cog):
                 'country': self.bot.user_settings[user_id]["country"],
                 'method': self.bot.user_settings[user_id]["calculation_method"],
                 'timezone': self.bot.user_settings[user_id]["timezone"],
-                'school': self.bot.user_settings[user_id]["asr_method"]
+                'school': self.bot.user_settings[user_id]["asr_method"],
+                'tune': '0,0,0,0,0,0,0,0,0'  # Add this parameter
             }
-
+            
             async with aiohttp.ClientSession() as session:
                 async with session.get(ALADHAN_API_URL, params=params) as response:
                     data = await response.json()
