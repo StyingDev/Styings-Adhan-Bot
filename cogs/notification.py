@@ -68,7 +68,8 @@ class NotificationsCog(commands.Cog):
                     'method': self.bot.user_settings[user_id]["calculation_method"],
                     'timezone': self.bot.user_settings[user_id]["timezone"],
                     'school': self.bot.user_settings[user_id]["asr_method"],
-                    'tune': '0,0,0,0,0,0,0,0,0'
+                    'tune': '0,0,0,0,0,0,0,0,0',
+                    'date': datetime.datetime.now(user_timezone).strftime('%d-%m-%Y')  # Add date parameter
                 }
                 
                 async with aiohttp.ClientSession() as session:
@@ -82,17 +83,17 @@ class NotificationsCog(commands.Cog):
                 
                 for prayer in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]:
                     if prayer in timings:
-                        # Parse the time string from API correctly
+                        # Use the time directly from API without additional timezone conversion
                         prayer_time = datetime.datetime.strptime(timings[prayer], '%H:%M').time()
                         prayer_datetime = datetime.datetime.combine(current_time.date(), prayer_time)
-                        prayer_datetime = prayer_datetime.replace(tzinfo=user_timezone)
+                        # Apply timezone info without conversion
+                        prayer_datetime = user_timezone.localize(prayer_datetime)
                         
-                        # If prayer time has passed today, schedule for tomorrow
                         if prayer_datetime <= current_time:
                             prayer_datetime += datetime.timedelta(days=1)
                         
                         prayer_times[prayer] = prayer_datetime
-
+                
                 if not prayer_times:
                     # No valid prayer times found, wait for 5 minutes before retrying
                     await asyncio.sleep(300)
@@ -123,8 +124,6 @@ class NotificationsCog(commands.Cog):
                 
                 # 7. Send notification only if the loop is still active
                 if user_id in self.loop_notifications:
-                    # Add a 2-minute delay
-                    await asyncio.sleep(120)
                     
                     # Format the time in 12-hour format for the message
                     prayer_time_12hr = next_prayer_time.strftime('%I:%M %p')
@@ -174,7 +173,8 @@ class NotificationsCog(commands.Cog):
                 'method': self.bot.user_settings[user_id]["calculation_method"],
                 'timezone': self.bot.user_settings[user_id]["timezone"],
                 'school': self.bot.user_settings[user_id]["asr_method"],
-                'tune': '0,0,0,0,0,0,0,0,0'
+                'tune': '0,0,0,0,0,0,0,0,0',
+                'date': datetime.datetime.now().strftime('%d-%m-%Y')  # Add date parameter
             }
             
             async with aiohttp.ClientSession() as session:
@@ -194,7 +194,8 @@ class NotificationsCog(commands.Cog):
                             # Parse the time string from API correctly
                             prayer_time = datetime.datetime.strptime(timings[prayer], '%H:%M').time()
                             prayer_datetime = datetime.datetime.combine(current_time.date(), prayer_time)
-                            prayer_datetime = prayer_datetime.replace(tzinfo=user_timezone)
+                            # Apply timezone info without conversion
+                            prayer_datetime = user_timezone.localize(prayer_datetime)
                             
                             # If prayer time has passed today, schedule for tomorrow
                             if prayer_datetime <= current_time:
@@ -234,24 +235,33 @@ class NotificationsCog(commands.Cog):
 
     async def schedule_notification_datetime(self, user, notify_datetime, next_prayer, user_timezone):
         """Schedule notification using a datetime object instead of a time string"""
-        # Get current time in user's timezone
-        current_time = datetime.datetime.now(user_timezone)
-        
-        # Calculate the delay until the notification time
-        delay_seconds = (notify_datetime - current_time).total_seconds()
-        
-        # Make sure delay is not negative
-        delay_seconds = max(0, delay_seconds)
-        
-        # Wait until it's time to send the notification
-        await asyncio.sleep(delay_seconds)
-        
-        # Add a 2-minute delay
-        await asyncio.sleep(120)
-        
-        # Send DM notification with the time included
-        prayer_time_12hr = notify_datetime.strftime('%I:%M %p')
-        await user.send(f"It's time for {next_prayer} in {self.bot.user_settings[str(user.id)]['city']}! at {prayer_time_12hr}")
+        try:
+            # Get current time in user's timezone
+            current_time = datetime.datetime.now(user_timezone)
+            
+            # Calculate the delay until the notification time
+            delay_seconds = (notify_datetime - current_time).total_seconds()
+            
+            # Make sure delay is not negative
+            delay_seconds = max(0, delay_seconds)
+            
+            # Wait until it's time to send the notification
+            await asyncio.sleep(delay_seconds)
+
+            
+            # Send DM notification with the time included
+            prayer_time_12hr = notify_datetime.strftime('%I:%M %p')
+            await user.send(f"It's time for {next_prayer} in {self.bot.user_settings[str(user.id)]['city']}! at {prayer_time_12hr}")
+            
+        except asyncio.CancelledError:
+            # Task was cancelled
+            pass
+        except Exception as e:
+            print(f"Error in schedule_notification_datetime for user {user.id}: {e}")
+            try:
+                await user.send("There was an error with your prayer notification. Please try using /notify again.")
+            except:
+                pass
 
 
     @app_commands.allowed_installs(guilds=True, users=True)
