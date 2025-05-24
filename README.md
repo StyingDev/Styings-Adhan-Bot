@@ -17,6 +17,7 @@ Stying's Adhan Bot is a Discord bot designed to provide prayer timings and remin
 - Upcoming Salah: View the next upcoming prayer time for your configured region.
 - Prayer Timings: Display all prayer timings (Fajr, Dhuhr, Asr, Maghrib, Isha) for your region.
 - Notification: Schedule DM notifications for upcoming prayer times.
+- Qibla Direction: Get the direction to the Kaaba based on your location.
 - Help Command: List available commands and their usage.
 
 ## Commands
