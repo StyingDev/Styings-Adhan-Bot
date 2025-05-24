@@ -147,15 +147,12 @@ class NotificationsCog(commands.Cog):
         except Exception as e:
             print(f"Error in notification loop for user {user_id}: {e}")
             try:
-                await user.send(f"There was an error with your prayer notification loop. Please use `/notifyloop` to restart it.")
+                await user.send("There was an error with your prayer notification loop. Retrying in 60 seconds...")
             except:
                 pass
-            if user_id in self.loop_notifications:
-                del self.loop_notifications[user_id]
-            if user_id in self.bot.user_settings:
-                self.bot.user_settings[user_id]["notify_loop_active"] = False
-                await self.bot.save_settings()
 
+            # Wait and try again instead of ending the loop
+            await asyncio.sleep(60)
 
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
