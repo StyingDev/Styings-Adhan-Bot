@@ -152,7 +152,7 @@ class NotificationsCog(commands.Cog):
                 pass
 
             # Wait and try again instead of ending the loop
-            await asyncio.sleep(60)
+            await asyncio.sleep(600)
 
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
