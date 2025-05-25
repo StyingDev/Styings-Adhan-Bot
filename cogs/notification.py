@@ -147,7 +147,7 @@ class NotificationsCog(commands.Cog):
         except Exception as e:
             print(f"Error in notification loop for user {user_id}: {e}")
             try:
-                await user.send("There was an error with your prayer notification loop. Retrying in 60 seconds...")
+                await user.send("There was an error with your prayer notification loop. If notications are stoped in future try doing /notifyloop again.")
             except:
                 pass
 
