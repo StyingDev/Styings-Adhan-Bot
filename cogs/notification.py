@@ -139,10 +139,6 @@ class NotificationsCog(commands.Cog):
             if user_id in self.loop_notifications:
                 del self.loop_notifications[user_id]
             
-            # Update user settings
-            if user_id in self.bot.user_settings:
-                self.bot.user_settings[user_id]["notify_loop_active"] = False
-                await self.bot.save_settings()
 
         except Exception as e:
             print(f"Error in notification loop for user {user_id}: {e}")
@@ -337,18 +333,6 @@ class NotificationsCog(commands.Cog):
                         # Start notification loop
                         loop_task = self.bot.loop.create_task(self.notification_loop(user, user_timezone))
                         self.loop_notifications[user_id] = loop_task
-                        
-                        # Inform user that their notification loop has been restored
-                        try:
-                            embed = discord.Embed(
-                                title="Notification Loop Restored", 
-                                description=f"Your prayer notification loop has been restored after bot restart.\n\n Apologies if there was any missed prayer notification during this downtime. We don't have a reliable hosting provider to ensure 100% uptime.\n There are also times API is ratelimited you will not be responded.\n\nWe apologize for any inconvenience caused.", 
-                                color=EMBED_COLOR
-                            )
-                            await user.send(embed=embed)
-                        except:
-                            # Unable to send DM, but continue with the loop
-                            pass
                 except Exception as e:
                     print(f"Error restoring notification loop for user {user_id}: {e}")
 

@@ -2,39 +2,15 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import json
+from timezonefinder import TimezoneFinder
+from geopy.geocoders import Nominatim
 
 # Default values
 DEFAULT_ASR_METHOD = '1'
 DEFAULT_CALC_METHOD = '2'
 
-# Predefined list of timezones
-timezones = [
-    "America/New_York",
-    "America/Chicago", 
-    "America/Los_Angeles",
-    "America/Toronto",
-    "America/Mexico_City",
-    "America/Vancouver",
-    "America/Phoenix",
-    "Europe/London",
-    "Europe/Berlin", 
-    "Europe/Paris",
-    "Europe/Madrid",
-    "Europe/Istanbul",
-    "Asia/Tokyo",
-    "Asia/Shanghai",
-    "Asia/Singapore", 
-    "Asia/Dubai",
-    "Asia/Riyadh",
-    "Asia/Dhaka",
-    "Asia/Kolkata",
-    "Asia/Jakarta",
-    "Asia/Seoul",
-    "Australia/Sydney",
-    "Africa/Cairo",
-    "Africa/Lagos",
-    "Africa/Johannesburg"
-]
+geolocator = Nominatim(user_agent="discord_prayer_bot")
+tf = TimezoneFinder()
 
 # Calculation Methods
 calculation_methods = {
@@ -55,26 +31,6 @@ calculation_methods = {
 
 # Embed color
 EMBED_COLOR = 0x757e8a
-
-class TimeZoneSelect(discord.ui.Select):
-    def __init__(self):
-        options = [discord.SelectOption(label=tz, value=tz) for tz in timezones]
-        super().__init__(
-            placeholder="Select a timezone",
-            min_values=1,
-            max_values=1,
-            options=options
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        user_id = str(interaction.user.id)
-        self.view.bot.user_settings[user_id]["timezone"] = self.values[0]
-        await self.view.bot.save_settings()
-        
-        await interaction.response.edit_message(
-            content="Timezone set. Now, please select your Asr timing method:",
-            view=AsrMethodView(self.view.bot)
-        )
 
 
 class AsrMethodSelect(discord.ui.Select):
@@ -140,35 +96,46 @@ class SetupModal(discord.ui.Modal):
     def __init__(self, bot):
         super().__init__(title="Setup Your Region")
         self.bot = bot
-        self.country = discord.ui.TextInput(label="Country", placeholder="Enter your country", required=True)
-        self.city = discord.ui.TextInput(label="City", placeholder="Enter your city", required=True)
+        self.country = discord.ui.TextInput(label="Country", placeholder="Ex: Turkey", required=True)
+        self.city = discord.ui.TextInput(label="City", placeholder="Ex: Istanbul", required=True)
         
         self.add_item(self.country)
         self.add_item(self.city)
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
         user_id = str(interaction.user.id)
+        location_query = f"{self.city.value}, {self.country.value}"
+        
+        try:
+            
+            location = geolocator.geocode(location_query)
+            
+            if location:
+                
+                timezone_str = tf.timezone_at(lng=location.longitude, lat=location.latitude)
+            else:
+                timezone_str = "UTC"  # Fallback
+                
+        except Exception as e:
+            print(f"Error detecting timezone: {e}")
+            timezone_str = "UTC"
+
         self.bot.user_settings[user_id] = {
             "country": self.country.value,
             "city": self.city.value,
-            "timezone": None,
+            "timezone": timezone_str,
             "asr_method": DEFAULT_ASR_METHOD,
             "calculation_method": DEFAULT_CALC_METHOD
         }
         await self.bot.save_settings()
 
-        await interaction.response.send_message(
-            "Please select your timezone.",
-            view=TimeZoneView(self.bot),
+        await interaction.followup.send(
+            f"Detected Timezone: **{timezone_str}**\n-# if this timezone is **incorrect** do /setup again with proper location names.\n-# This is important for /notify commands.\n\nNow, please select your Asr timing method:",
+            view=AsrMethodView(self.bot),
             ephemeral=True
         )
-
-
-class TimeZoneView(discord.ui.View):
-    def __init__(self, bot):
-        super().__init__()
-        self.bot = bot
-        self.add_item(TimeZoneSelect())
 
 
 class SetupCog(commands.Cog):
@@ -197,6 +164,7 @@ class SetupCog(commands.Cog):
             asr_method = "Hanafi juristic (Recommended)" if self.bot.user_settings[user_id]["asr_method"] == '1' else "Standard (Shafi'i, Maliki, and Hanbali)"
             calc_method = calculation_methods[self.bot.user_settings[user_id]["calculation_method"]]
             embed = discord.Embed(title="Current Region Settings", description=f"Country: {country}\nCity: {city}\nTimezone: {timezone}\nAsr Method: {asr_method}\nCalculation Method: {calc_method}", color=EMBED_COLOR)
+            embed.set_footer(text="⚙️ To change your preferences do /setup")
             await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
             await interaction.response.send_message("Please set up your region using /setup first.")
