@@ -38,17 +38,16 @@ class MosqueCog(commands.Cog):
 
     def create_mosque_embed(self, query: str, radius_km: float, mosques_page: List[Dict], 
                            page: int, total_pages: int, total_mosques: int) -> discord.Embed:
-        """Create an embed for a page of mosque results."""
         title = f"Mosques Near {query}"
-        description = f"-# Found **{total_mosques}** mosques within **{radius_km}km** radius"
+        description = f"Found **{total_mosques}** mosques within **{radius_km}km** radius\n"
         
-        embed = discord.Embed(title=title, description=description, color=EMBED_COLOR)
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=EMBED_COLOR,
+        )
         
-        # Add pagination info
-        embed.add_field(name="Page", value=f"**{page}/{total_pages}**", inline=True)
-        embed.add_field(name="Results per page", value=f"**{self.PAGE_SIZE}**", inline=True)
-        embed.add_field(name="\u200b", value="\u200b", inline=True)
-        
+        # Add mosque entries
         start_idx = (page - 1) * self.PAGE_SIZE
 
         for idx, m in enumerate(mosques_page, start=start_idx + 1):
@@ -57,32 +56,32 @@ class MosqueCog(commands.Cog):
             addr = (m['address'] or '').strip()
             lat = m['lat']
             lon = m['lon']
-            osm_link = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=18/{lat}/{lon}"
-
-            denom = m.get('denomination', '') or ''
-            denom_text = f" ({denom})" if denom else ""
-
-            field_name = f"{idx}. {name}{denom_text}"
-            value_lines = [f"> {dist:.2f} km", f"-# [OpenStreetMap]({osm_link})"]
+            
+            # Format: "1. **Unnamed Mosque | 0.78 km**"
+            field_name = f"{idx}. **{name} | {dist:.2f} km**"
+            
+            value_lines = []
+            
             if addr:
-                addr_short = addr if len(addr) <= 120 else addr[:117] + "..."
-                value_lines.append(addr_short)
-
-            embed.add_field(name=field_name, value="\n > ".join(value_lines), inline=True)
+                value_lines.append(addr)
+            
+            osm_link = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=18/{lat}/{lon}"
+            google_maps_link = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+            
+            value_lines.append(f"[View on Maps]({google_maps_link}) | [View on OSM]({osm_link})")
+            
+            embed.add_field(
+                name=field_name,
+                value="\n".join(value_lines),
+                inline=False
+            )
         
-        controls = []
-        if page > 1:
-            controls.append("Previous")
-        if page < total_pages:
-            controls.append("Next")
-
-        embed.set_footer(text="🕌 Data: OpenStreetMap")
+        footer_text = f"Data: OpenStreetMap | Page - {page}/{total_pages}"
+        embed.set_footer(text=footer_text)
         
         return embed
 
-    async def send_paginated_results(self, interaction: discord.Interaction, query: str, radius_km: float, 
-                                   all_mosques: List[Dict], total_mosques: int, original_message: Optional[discord.Message] = None):
-        """Send paginated results with navigation. If `original_message` is provided, edit it instead of sending a new followup."""
+    async def send_paginated_results(self, interaction: discord.Interaction, query: str, radius_km: float, all_mosques: List[Dict], total_mosques: int, original_message: Optional[discord.Message] = None):
         total_pages = (len(all_mosques) + self.PAGE_SIZE - 1) // self.PAGE_SIZE
         
         # Store search data for this user
@@ -127,7 +126,6 @@ class MosqueCog(commands.Cog):
     @app_commands.command(name='mosque', description='Find mosques near a provided location (location is required).')
     @app_commands.describe(radius_km='Search radius in kilometers (max 50)', location='Location to search (required)')
     async def mosque(self, interaction: discord.Interaction, location: str, radius_km: float = 5.0):
-        """Find nearest mosques using OpenStreetMap Overpass API with pagination. The `location` parameter is required."""
         await interaction.response.defer()
 
         # Validate radius
@@ -257,15 +255,12 @@ out center;
                     addr_parts.append(tags.get(k))
             address = ", ".join(addr_parts) if addr_parts else tags.get('addr:full') or tags.get('description') or ''
             
-            denomination = tags.get('denomination', '')
-            
             mosques.append({
                 'name': name,
                 'lat': lat,
                 'lon': lon,
                 'distance_km': dist,
                 'address': address,
-                'denomination': denomination
             })
         
         mosques.sort(key=lambda x: x['distance_km'])
@@ -273,7 +268,8 @@ out center;
         await self.send_paginated_results(interaction, query, radius_km, mosques, len(elements), original_message=processing_msg)
 
     async def update_page(self, user_id: str, channel: discord.TextChannel, page: int):
-        """Update the embed for a specific page."""
+        # Update the embed for a specific page
+
         if user_id not in self.user_searches:
             return False
         
@@ -330,7 +326,7 @@ out center;
 
 
 class PaginationView(discord.ui.View):
-    """View for pagination controls."""
+    # View for pagination controls
     def __init__(self, user_id: str, cog: MosqueCog):
         super().__init__(timeout=300)
         self.user_id = user_id
@@ -370,7 +366,6 @@ class PaginationView(discord.ui.View):
                 await interaction.response.send_message("Failed to update page.", ephemeral=True)
         else:
             await interaction.response.defer()
-    
     
     async def on_timeout(self):
         await self.cog.cleanup_search(self.user_id)
