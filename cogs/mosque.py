@@ -4,21 +4,28 @@ from discord import app_commands
 import aiohttp
 import asyncio
 import math
-from typing import Dict, List, Optional
+import time
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 EMBED_COLOR = 0x757e8a
 
 GEOCODING_API_URL = 'https://nominatim.openstreetmap.org/search'
+# Ordered by measured reliability: kumi hangs until timeout and .fr is
+# whitelist-only, so they are last-resort fallbacks
 OVERPASS_ENDPOINTS = [
-    'https://overpass.kumi.systems/api/interpreter',
     'https://lz4.overpass-api.de/api/interpreter',
-    'https://overpass.openstreetmap.fr/api/interpreter',
     'http://overpass-api.de/api/interpreter',
+    'https://overpass.openstreetmap.fr/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
 ]
 USER_AGENT = 'Adhan-Bot/1.0'
 PAGE_SIZE = 10
 OVERPASS_TIMEOUT = 30
+
+MAX_RESULTS = 300
+CACHE_TTL = 6 * 3600
+CACHE_MAX_ENTRIES = 128
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -44,12 +51,13 @@ class PaginationView(discord.ui.View):
     """Self-contained paginator: holds the result list and current page,
     so concurrent searches by the same user can't clobber each other."""
 
-    def __init__(self, user_id: str, query: str, radius_km: float, mosques: List[Dict]):
+    def __init__(self, user_id: str, query: str, radius_km: float, mosques: List[Dict], note: str = ''):
         super().__init__(timeout=300)
         self.user_id = user_id
         self.query = query
         self.radius_km = radius_km
         self.mosques = mosques
+        self.note = note
         self.page = 1
         self.total_pages = (len(mosques) + PAGE_SIZE - 1) // PAGE_SIZE
         self.message: Optional[discord.Message] = None
@@ -62,7 +70,10 @@ class PaginationView(discord.ui.View):
 
     def build_embed(self) -> discord.Embed:
         start_idx = (self.page - 1) * PAGE_SIZE
-        lines = [f"Found **{len(self.mosques)}** mosques within **{self.radius_km:g}km** radius\n"]
+        lines = [f"Found **{len(self.mosques)}** mosques within **{self.radius_km:g}km** radius"]
+        if self.note:
+            lines.append(f"*{self.note}*")
+        lines.append("")
 
         for idx, m in enumerate(self.mosques[start_idx:start_idx + PAGE_SIZE], start=start_idx + 1):
             lat, lon = m['lat'], m['lon']
@@ -125,6 +136,9 @@ class MosqueCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.session: Optional[aiohttp.ClientSession] = None
+        # (lat, lon, radius) -> (expires_at, (mosques, effective_radius))
+        self.search_cache: Dict[Tuple, Tuple] = {}
+        self.preferred_endpoint = OVERPASS_ENDPOINTS[0]
 
     async def cog_load(self):
         self.session = aiohttp.ClientSession(headers={'User-Agent': USER_AGENT})
@@ -167,33 +181,77 @@ class MosqueCog(commands.Cog):
 
         await interaction.edit_original_response(content=f"Searching for mosques within {radius_km:g}km of **{query}**... This may take a moment.")
 
-        # nwr covers nodes, ways and relations; "out center" returns a single
-        # center point per way/relation, so no member-node recursion is needed
-        radius_m = int(radius_km * 1000)
-        overpass_query = f"""
-[out:json][timeout:{OVERPASS_TIMEOUT}];
-(
-  nwr["amenity"="place_of_worship"]["religion"="muslim"](around:{radius_m},{user_lat},{user_lon});
-  nwr["building"="mosque"](around:{radius_m},{user_lat},{user_lon});
-  nwr["amenity"="mosque"](around:{radius_m},{user_lat},{user_lon});
-);
-out center;
-"""
+        cache_key = (round(user_lat, 3), round(user_lon, 3), round(radius_km, 1))
+        cached = self.cache_get(cache_key)
+        if cached:
+            mosques, effective_radius = cached
+        else:
+            try:
+                effective_radius = await self.fit_radius(user_lat, user_lon, radius_km)
+                res = await self.query_overpass(self.build_overpass_query(user_lat, user_lon, effective_radius, f"out center {MAX_RESULTS};"))
+            except Exception as e:
+                await interaction.edit_original_response(content=f"Error querying OpenStreetMap Overpass API: {e}. Try again later or reduce the radius.")
+                return
 
-        try:
-            res = await self.query_overpass(overpass_query)
-        except Exception as e:
-            await interaction.edit_original_response(content=f"Error querying OpenStreetMap Overpass API: {e}. Try again later or reduce the radius.")
-            return
-
-        mosques = self.parse_mosques(res.get('elements', []), user_lat, user_lon)
+            mosques = self.parse_mosques(res.get('elements', []), user_lat, user_lon)
+            self.cache_put(cache_key, (mosques, effective_radius))
 
         if not mosques:
             await interaction.edit_original_response(content=f"No mosques found within {radius_km:g} km of {query}.")
             return
 
-        view = PaginationView(str(interaction.user.id), query, radius_km, mosques)
+        note = ''
+        if effective_radius < radius_km:
+            note = f"Radius reduced from {radius_km:g}km — this area has a very high mosque density"
+
+        view = PaginationView(str(interaction.user.id), query, effective_radius, mosques, note)
         view.message = await interaction.edit_original_response(content=None, embed=view.build_embed(), view=view)
+
+    @staticmethod
+    def build_overpass_query(lat: float, lon: float, radius_km: float, out_statement: str) -> str:
+        radius_m = int(radius_km * 1000)
+        return f"""
+[out:json][timeout:{OVERPASS_TIMEOUT}];
+(
+  nwr["amenity"="place_of_worship"]["religion"="muslim"](around:{radius_m},{lat},{lon});
+  nwr["building"="mosque"](around:{radius_m},{lat},{lon});
+  nwr["amenity"="mosque"](around:{radius_m},{lat},{lon});
+);
+{out_statement}
+"""
+
+    async def fit_radius(self, lat: float, lon: float, radius_km: float) -> float:
+        """Shrink the radius in one shot if the area is too dense.
+
+        "out count" is much cheaper than fetching elements, and a single count
+        keeps us at 2 Overpass round trips total — rapid consecutive queries
+        trip the mirrors' rate limits. The fetch cap catches any undershoot.
+        """
+        try:
+            res = await self.query_overpass(self.build_overpass_query(lat, lon, radius_km, "out count;"))
+            count = int(res['elements'][0]['tags']['total'])
+        except Exception:
+            return radius_km
+        if count > MAX_RESULTS:
+            radius_km = max(0.5, radius_km * math.sqrt(MAX_RESULTS / count) * 0.8)
+        return round(radius_km, 1)
+
+    def cache_get(self, key):
+        entry = self.search_cache.get(key)
+        if entry and entry[0] > time.time():
+            return entry[1]
+        self.search_cache.pop(key, None)
+        return None
+
+    def cache_put(self, key, value):
+        if len(self.search_cache) >= CACHE_MAX_ENTRIES:
+            now = time.time()
+            expired = [k for k, v in self.search_cache.items() if v[0] <= now]
+            for k in expired:
+                del self.search_cache[k]
+            while len(self.search_cache) >= CACHE_MAX_ENTRIES:
+                self.search_cache.pop(next(iter(self.search_cache)))
+        self.search_cache[key] = (time.time() + CACHE_TTL, value)
 
     async def query_overpass(self, overpass_query: str):
         """Try each Overpass mirror once; any failure moves on to the next.
@@ -204,10 +262,13 @@ out center;
         last_exc = None
         timeout = aiohttp.ClientTimeout(total=OVERPASS_TIMEOUT + 5)
 
-        for endpoint in OVERPASS_ENDPOINTS:
+        endpoints = [self.preferred_endpoint] + [e for e in OVERPASS_ENDPOINTS if e != self.preferred_endpoint]
+
+        for endpoint in endpoints:
             try:
                 async with self.session.post(endpoint, data=overpass_query, timeout=timeout) as resp:
                     if resp.status == 200:
+                        self.preferred_endpoint = endpoint
                         return await resp.json()
                     text = await resp.text()
                     last_exc = Exception(f"Overpass returned status {resp.status}: {text[:200]}")
@@ -215,6 +276,7 @@ out center;
                 last_exc = Exception(f"Timeout querying {endpoint}")
             except aiohttp.ClientError as exc:
                 last_exc = exc
+            print(f"Overpass mirror failed ({endpoint}): {last_exc}")
         raise last_exc or Exception("Overpass query failed for all endpoints")
 
     @staticmethod
