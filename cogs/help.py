@@ -27,6 +27,7 @@ class HelpCog(commands.Cog):
         embed.add_field(name="/notifyloopstop", value="Stop the notification chain for upcoming salahs.", inline=False)
         embed.add_field(name="/qibla", value="Get the Qibla direction from your location.", inline=False)
         embed.add_field(name="/mosque", value="Find mosques near a location (defaults to your /setup region).", inline=False)
+        embed.add_field(name="/calendar", value="Browse the Islamic (Hijri) calendar with important dates.", inline=False)
 
         await interaction.response.send_message(embed=embed)
 

@@ -36,6 +36,7 @@ User settings are stored in a local SQLite database (`user_settings.db`), create
 | `/settings`     | View and edit your settings (region, Asr/calculation method), or delete your data. |
 | `/qibla`        | Shows the direction to face Qibla from your location.                       |
 | `/mosque`       | Shows nearby mosques (defaults to your saved region, or pass a location).   |
+| `/calendar`     | Browse the Islamic (Hijri) calendar with important dates.                    |
 | `/upcoming`     | Display the next upcoming salah timing.                                     |
 | `/timings`      | Display all the salah timings for the day.                                  |
 | `/notify`       | Set a notification for the next upcoming salah.                             |
