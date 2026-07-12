@@ -202,7 +202,7 @@ class MosqueCog(commands.Cog):
 
         note = ''
         if effective_radius < radius_km:
-            note = f"Radius reduced from {radius_km:g}km — this area has a very high mosque density"
+            note = f"Radius reduced from {radius_km:g}km, this area has a very high mosque density"
 
         view = PaginationView(str(interaction.user.id), query, effective_radius, mosques, note)
         view.message = await interaction.edit_original_response(content=None, embed=view.build_embed(), view=view)
@@ -224,7 +224,7 @@ class MosqueCog(commands.Cog):
         """Shrink the radius in one shot if the area is too dense.
 
         "out count" is much cheaper than fetching elements, and a single count
-        keeps us at 2 Overpass round trips total — rapid consecutive queries
+        keeps us at 2 Overpass round trips total - rapid consecutive queries
         trip the mirrors' rate limits. The fetch cap catches any undershoot.
         """
         try:

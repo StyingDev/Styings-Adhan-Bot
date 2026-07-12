@@ -1,6 +1,3 @@
-import json
-import os
-
 import aiosqlite
 
 DB_FILE = 'user_settings.db'
@@ -100,50 +97,44 @@ class Database:
         )
         await self._db.commit()
 
+    async def count_users(self):
+        """Number of users who have completed /setup."""
+        async with self._db.execute("SELECT COUNT(*) FROM user_settings") as cursor:
+            return (await cursor.fetchone())[0]
+
+    async def get_stats(self):
+        """Aggregate numbers for presence displays."""
+        async with self._db.execute(
+            """
+            SELECT COUNT(*),
+                   COUNT(DISTINCT LOWER(TRIM(country))),
+                   COUNT(DISTINCT LOWER(TRIM(city))),
+                   COALESCE(SUM(notify_loop_active), 0)
+            FROM user_settings
+            """
+        ) as cursor:
+            users, countries, cities, active_loops = await cursor.fetchone()
+
+        top_city, top_city_users = None, 0
+        async with self._db.execute(
+            "SELECT city, COUNT(*) FROM user_settings GROUP BY LOWER(TRIM(city)) ORDER BY COUNT(*) DESC LIMIT 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                top_city, top_city_users = row
+
+        return {
+            'users': users,
+            'countries': countries,
+            'cities': cities,
+            'active_loops': active_loops,
+            'top_city': top_city,
+            'top_city_users': top_city_users,
+        }
+
     async def get_notify_loop_users(self):
         """Return settings for every user with an active notification loop."""
         async with self._db.execute(
             "SELECT * FROM user_settings WHERE notify_loop_active = 1"
         ) as cursor:
             return [_row_to_settings(row) for row in await cursor.fetchall()]
-
-    async def migrate_from_json(self, json_path):
-        """One-time import of the legacy user_settings.json file.
-
-        Existing DB rows win over JSON entries, so re-running is safe.
-        The JSON file is renamed to <name>.migrated afterwards.
-        """
-        if not os.path.exists(json_path):
-            return
-
-        with open(json_path, 'r') as f:
-            legacy = json.load(f)
-
-        imported = 0
-        for user_id, settings in legacy.items():
-            try:
-                await self._db.execute(
-                    """
-                    INSERT OR IGNORE INTO user_settings
-                        (user_id, country, city, timezone, asr_method,
-                         calculation_method, notify_loop_active)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        int(user_id),
-                        settings["country"],
-                        settings["city"],
-                        settings.get("timezone") or "UTC",
-                        settings.get("asr_method", '1'),
-                        settings.get("calculation_method", '2'),
-                        int(bool(settings.get("notify_loop_active", False))),
-                    ),
-                )
-                imported += 1
-            except (KeyError, ValueError) as e:
-                print(f"Skipping malformed legacy entry for user {user_id}: {e}")
-        await self._db.commit()
-
-        backup_path = json_path + '.migrated'
-        os.replace(json_path, backup_path)
-        print(f"Migrated {imported} user(s) from {json_path} (backup: {backup_path})")
