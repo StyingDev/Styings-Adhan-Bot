@@ -2,10 +2,7 @@
 
 Stying's Adhan Bot is a Discord bot designed to provide prayer timings and reminders based on user preferences.
 
-[Invite the Bot!](https://discord.com/oauth2/authorize?client_id=1229836097702596679&permissions=277025441856&scope=bot)
-
-<img width="431" height="162" alt="Screenshot 2026-07-13 005047" src="https://github.com/user-attachments/assets/e972448f-4fa4-4009-bcbb-f2e0bf0f1f60" />
-
+<img width="425" height="173" alt="image" src="https://github.com/user-attachments/assets/3fb8f00e-ebc0-462a-81ad-b4ee4f765472" />
 
 
 ## I) Small Disclaimer
