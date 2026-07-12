@@ -19,7 +19,7 @@ class HelpCog(commands.Cog):
         embed = discord.Embed(title="Adhan Bot Help", description="Here are the available commands for the Adhan Bot:", color=EMBED_COLOR)
 
         embed.add_field(name="/setup", value="Set up your region settings (country, city, timezone and salah time calculations).", inline=False)
-        embed.add_field(name="/region", value="View your current region settings.", inline=False)
+        embed.add_field(name="/settings", value="View and edit your settings, or delete your data.", inline=False)
         embed.add_field(name="/upcoming", value="Get the upcoming salah time for your region.", inline=False)
         embed.add_field(name="/timings", value="Get all the salah timings for your region.", inline=False)
         embed.add_field(name="/notify", value="Schedule a DM notification for the next salah time.", inline=False)

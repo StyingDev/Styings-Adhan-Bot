@@ -160,23 +160,29 @@ class MosqueCog(commands.Cog):
 
         radius_km = max(0.1, min(50.0, float(radius_km)))
 
+        coords = None
         query = location.strip() if location and location.strip() else None
         if not query:
             settings = await self.bot.db.get_user(interaction.user.id)
             if settings:
                 query = f"{settings['city']}, {settings['country']}"
+                if settings['latitude'] is not None:
+                    coords = (settings['latitude'], settings['longitude'])
             else:
                 await interaction.edit_original_response(content="Please provide a `location`, or save your region with `/setup` first.")
                 return
 
-        try:
-            coords = await self.get_coordinates(query)
-        except Exception as e:
-            await interaction.edit_original_response(content=f"Error resolving location: {e}")
-            return
-        if not coords:
-            await interaction.edit_original_response(content=f"Could not geocode '{query}'. Try a different location.")
-            return
+        # Saved regions come with stored coordinates; only explicit locations
+        # (or pre-coordinate rows) need geocoding
+        if coords is None:
+            try:
+                coords = await self.get_coordinates(query)
+            except Exception as e:
+                await interaction.edit_original_response(content=f"Error resolving location: {e}")
+                return
+            if not coords:
+                await interaction.edit_original_response(content=f"Could not geocode '{query}'. Try a different location.")
+                return
         user_lat, user_lon = coords
 
         await interaction.edit_original_response(content=f"Searching for mosques within {radius_km:g}km of **{query}**... This may take a moment.")

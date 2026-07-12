@@ -5,8 +5,20 @@ import aiohttp
 import pytz
 import datetime
 
-ALADHAN_API_URL = 'http://api.aladhan.com/v1/timingsByCity'
+ALADHAN_API_URL = 'http://api.aladhan.com/v1/timings'
 EMBED_COLOR = 0x757e8a
+RESETUP_MESSAGE = "Your saved location needs a refresh — please run /setup again."
+
+
+def timings_params(settings):
+    """Aladhan query params from stored coordinates (aiohttp needs strings)."""
+    return {
+        'latitude': str(settings["latitude"]),
+        'longitude': str(settings["longitude"]),
+        'method': settings["calculation_method"],
+        'school': settings["asr_method"],
+        'timezonestring': settings["timezone"],
+    }
 
 class TimingsCog(commands.Cog):
     def __init__(self, bot):
@@ -24,16 +36,12 @@ class TimingsCog(commands.Cog):
 
         settings = await self.bot.db.get_user(user_id)
         if settings and settings["timezone"]:
-            params = {
-                'city': settings["city"],
-                'country': settings["country"],
-                'method': settings["calculation_method"],
-                'timezone': settings["timezone"],
-                'school': settings["asr_method"]
-            }
+            if settings["latitude"] is None:
+                await interaction.response.send_message(RESETUP_MESSAGE, ephemeral=True)
+                return
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(ALADHAN_API_URL, params=params) as response:
+                async with session.get(ALADHAN_API_URL, params=timings_params(settings)) as response:
                     data = await response.json()
                     timings = data['data']['timings']
 
@@ -67,16 +75,12 @@ class TimingsCog(commands.Cog):
 
         settings = await self.bot.db.get_user(user_id)
         if settings and settings["timezone"]:
-            params = {
-                'city': settings["city"],
-                'country': settings["country"],
-                'method': settings["calculation_method"],
-                'timezone': settings["timezone"],
-                'school': settings["asr_method"]
-            }
+            if settings["latitude"] is None:
+                await interaction.response.send_message(RESETUP_MESSAGE, ephemeral=True)
+                return
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(ALADHAN_API_URL, params=params) as response:
+                async with session.get(ALADHAN_API_URL, params=timings_params(settings)) as response:
                     data = await response.json()
                     timings = data['data']['timings']
 

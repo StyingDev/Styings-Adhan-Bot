@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -9,6 +10,29 @@ DEFAULT_CALC_METHOD = '2'
 
 geolocator = Nominatim(user_agent="discord_prayer_bot")
 tf = TimezoneFinder()
+
+
+async def geocode_location(city: str, country: str):
+    """Resolve free-text city/country to canonical names, timezone and coordinates.
+
+    Returns None when the location can't be found - callers must not save
+    anything in that case. Runs in a thread because geopy is blocking.
+    """
+    location = await asyncio.to_thread(
+        geolocator.geocode, f"{city}, {country}",
+        addressdetails=True, language='en',
+    )
+    if not location:
+        return None
+    address = location.raw.get('address', {})
+    return {
+        'city': address.get('city') or address.get('town') or address.get('village')
+                or address.get('municipality') or address.get('county') or city,
+        'country': address.get('country') or country,
+        'timezone': tf.timezone_at(lng=location.longitude, lat=location.latitude) or "UTC",
+        'latitude': location.latitude,
+        'longitude': location.longitude,
+    }
 
 calculation_methods = {
     '1': 'University of Islamic Sciences, Karachi (Recommended)',
@@ -86,49 +110,241 @@ class CalculationMethodView(discord.ui.View):
         self.add_item(CalculationMethodSelect())
 
 
+class ConfirmRegionView(discord.ui.View):
+    """Shows the geocoder's canonical result and only saves on confirmation."""
+
+    def __init__(self, bot, pending: dict, in_setup: bool, settings_view=None):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.pending = pending
+        self.in_setup = in_setup
+        self.settings_view = settings_view
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        p = self.pending
+        if self.in_setup:
+            await self.bot.db.upsert_user(
+                interaction.user.id,
+                country=p['country'],
+                city=p['city'],
+                timezone=p['timezone'],
+                latitude=p['latitude'],
+                longitude=p['longitude'],
+                asr_method=DEFAULT_ASR_METHOD,
+                calculation_method=DEFAULT_CALC_METHOD,
+            )
+            await interaction.response.edit_message(
+                content=f"Region saved as **{p['city']}, {p['country']}**. Now, please select your Asr timing method:",
+                view=AsrMethodView(self.bot),
+            )
+        else:
+            await self.bot.db.update_user(
+                interaction.user.id,
+                country=p['country'],
+                city=p['city'],
+                timezone=p['timezone'],
+                latitude=p['latitude'],
+                longitude=p['longitude'],
+            )
+            await interaction.response.edit_message(
+                content=f"Region updated to **{p['city']}, {p['country']}**.",
+                view=None,
+            )
+            if self.settings_view and self.settings_view.message:
+                settings = await self.bot.db.get_user(interaction.user.id)
+                view = SettingsView(self.bot, settings)
+                view.message = self.settings_view.message
+                try:
+                    await self.settings_view.message.edit(embed=build_settings_embed(settings), view=view)
+                except discord.HTTPException:
+                    pass
+
+    @discord.ui.button(label="Try Again", style=discord.ButtonStyle.secondary)
+    async def try_again(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.in_setup:
+            await interaction.response.send_modal(SetupModal(self.bot))
+        else:
+            settings = await self.bot.db.get_user(interaction.user.id)
+            await interaction.response.send_modal(RegionEditModal(self.bot, self.settings_view, settings))
+
+
 class SetupModal(discord.ui.Modal):
     def __init__(self, bot):
         super().__init__(title="Setup Your Region")
         self.bot = bot
         self.country = discord.ui.TextInput(label="Country", placeholder="Ex: Turkey", required=True)
         self.city = discord.ui.TextInput(label="City", placeholder="Ex: Istanbul", required=True)
-        
+
         self.add_item(self.country)
         self.add_item(self.city)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        
-        user_id = str(interaction.user.id)
-        location_query = f"{self.city.value}, {self.country.value}"
-        
+
         try:
-            
-            location = geolocator.geocode(location_query)
-            
-            if location:
-                timezone_str = tf.timezone_at(lng=location.longitude, lat=location.latitude)
-            else:
-                timezone_str = "UTC"
-
+            result = await geocode_location(self.city.value, self.country.value)
         except Exception as e:
-            print(f"Error detecting timezone: {e}")
-            timezone_str = "UTC"
+            print(f"Error geocoding location: {e}")
+            result = None
 
-        await self.bot.db.upsert_user(
-            user_id,
-            country=self.country.value,
-            city=self.city.value,
-            timezone=timezone_str,
-            asr_method=DEFAULT_ASR_METHOD,
-            calculation_method=DEFAULT_CALC_METHOD
-        )
+        if not result:
+            await interaction.followup.send(
+                f"Couldn't find **{self.city.value}, {self.country.value}** - nothing was saved. Please run /setup again and double-check the spelling.",
+                ephemeral=True,
+            )
+            return
 
         await interaction.followup.send(
-            f"Detected Timezone: **{timezone_str}**\n-# if this timezone is **incorrect** do /setup again with proper location names.\n-# This is important for /notify commands.\n\nNow, please select your Asr timing method:",
-            view=AsrMethodView(self.bot),
-            ephemeral=True
+            f"Did you mean: **{result['city']}, {result['country']}**?\nDetected timezone: **{result['timezone']}**\n-# This is important for /notify commands.",
+            view=ConfirmRegionView(self.bot, result, in_setup=True),
+            ephemeral=True,
         )
+
+
+def asr_method_label(value: str) -> str:
+    return "Hanafi juristic (Recommended)" if value == '1' else "Standard (Shafi'i, Maliki, and Hanbali)"
+
+
+def build_settings_embed(settings) -> discord.Embed:
+    embed = discord.Embed(
+        title="Your Settings",
+        description=(
+            f"Country: {settings['country']}\n"
+            f"City: {settings['city']}\n"
+            f"Timezone: {settings['timezone']}\n"
+            f"Asr Method: {asr_method_label(settings['asr_method'])}\n"
+            f"Calculation Method: {calculation_methods.get(settings['calculation_method'], 'Unknown')}"
+        ),
+        color=EMBED_COLOR,
+    )
+    embed.set_footer(text="⚙️ Edit any setting below")
+    return embed
+
+
+class SettingsAsrSelect(discord.ui.Select):
+    def __init__(self, current: str):
+        options = [
+            discord.SelectOption(label="Hanafi juristic (Recommended)", value='1', default=current == '1'),
+            discord.SelectOption(label="Standard (Shafi'i, Maliki, and Hanbali)", value='0', default=current == '0'),
+        ]
+        super().__init__(placeholder="Change Asr timing method", min_values=1, max_values=1, options=options, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.bot.db.update_user(interaction.user.id, asr_method=self.values[0])
+        await self.view.refresh(interaction)
+
+
+class SettingsCalcSelect(discord.ui.Select):
+    def __init__(self, current: str):
+        options = [
+            discord.SelectOption(label=name, value=key, default=key == current)
+            for key, name in calculation_methods.items()
+        ]
+        super().__init__(placeholder="Change calculation method", min_values=1, max_values=1, options=options, row=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.bot.db.update_user(interaction.user.id, calculation_method=self.values[0])
+        await self.view.refresh(interaction)
+
+
+class RegionEditModal(discord.ui.Modal):
+    def __init__(self, bot, settings_view, settings):
+        super().__init__(title="Edit Your Region")
+        self.bot = bot
+        self.settings_view = settings_view
+        self.country = discord.ui.TextInput(label="Country", default=settings['country'], required=True)
+        self.city = discord.ui.TextInput(label="City", default=settings['city'], required=True)
+        self.add_item(self.country)
+        self.add_item(self.city)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            result = await geocode_location(self.city.value, self.country.value)
+        except Exception as e:
+            print(f"Error geocoding location: {e}")
+            result = None
+
+        if not result:
+            await interaction.followup.send(
+                f"Couldn't find **{self.city.value}, {self.country.value}** - settings unchanged. Try again with different spelling.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            f"Did you mean: **{result['city']}, {result['country']}**?\nDetected timezone: **{result['timezone']}**",
+            view=ConfirmRegionView(self.bot, result, in_setup=False, settings_view=self.settings_view),
+            ephemeral=True,
+        )
+
+
+class ConfirmDeleteView(discord.ui.View):
+    def __init__(self, bot, settings_view):
+        super().__init__(timeout=60)
+        self.bot = bot
+        self.settings_view = settings_view
+
+    @discord.ui.button(label="Yes, delete everything", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.bot.db.delete_user(interaction.user.id)
+        await interaction.response.edit_message(
+            content="Your data has been deleted. Notifications will stop shortly. Use /setup anytime to start again.",
+            embed=None,
+            view=None,
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        settings = await self.bot.db.get_user(interaction.user.id)
+        view = SettingsView(self.bot, settings)
+        view.message = self.settings_view.message
+        await interaction.response.edit_message(content=None, embed=build_settings_embed(settings), view=view)
+
+
+class SettingsView(discord.ui.View):
+    def __init__(self, bot, settings):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.message = None
+        self.add_item(SettingsAsrSelect(settings['asr_method']))
+        self.add_item(SettingsCalcSelect(settings['calculation_method']))
+
+    async def refresh(self, interaction: discord.Interaction):
+        """Re-render the panel with fresh settings and dropdown defaults."""
+        settings = await self.bot.db.get_user(interaction.user.id)
+        view = SettingsView(self.bot, settings)
+        view.message = self.message
+        embed = build_settings_embed(settings)
+        if interaction.response.is_done():
+            if self.message:
+                await self.message.edit(embed=embed, view=view)
+        else:
+            await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Edit Region", style=discord.ButtonStyle.primary, row=2)
+    async def edit_region(self, interaction: discord.Interaction, button: discord.ui.Button):
+        settings = await self.bot.db.get_user(interaction.user.id)
+        await interaction.response.send_modal(RegionEditModal(self.bot, self, settings))
+
+    @discord.ui.button(label="Delete My Data", style=discord.ButtonStyle.danger, row=2)
+    async def delete_data(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="**Are you sure?** This deletes your region, preferences, and stops all prayer notifications.",
+            embed=None,
+            view=ConfirmDeleteView(self.bot, self),
+        )
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
 
 class SetupCog(commands.Cog):
@@ -147,19 +363,13 @@ class SetupCog(commands.Cog):
 
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    @app_commands.command(name='region', description='View your current set region and timezone.')
-    async def region(self, interaction: discord.Interaction):
-        user_id = str(interaction.user.id)
-        settings = await self.bot.db.get_user(user_id)
+    @app_commands.command(name='settings', description='View and edit your region, timezone, Asr method, and calculation method.')
+    async def settings(self, interaction: discord.Interaction):
+        settings = await self.bot.db.get_user(interaction.user.id)
         if settings:
-            country = settings["country"]
-            city = settings["city"]
-            timezone = settings["timezone"]
-            asr_method = "Hanafi juristic (Recommended)" if settings["asr_method"] == '1' else "Standard (Shafi'i, Maliki, and Hanbali)"
-            calc_method = calculation_methods[settings["calculation_method"]]
-            embed = discord.Embed(title="Current Region Settings", description=f"Country: {country}\nCity: {city}\nTimezone: {timezone}\nAsr Method: {asr_method}\nCalculation Method: {calc_method}", color=EMBED_COLOR)
-            embed.set_footer(text="⚙️ To change your preferences do /setup")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            view = SettingsView(self.bot, settings)
+            await interaction.response.send_message(embed=build_settings_embed(settings), view=view, ephemeral=True)
+            view.message = await interaction.original_response()
         else:
             await interaction.response.send_message("Please set up your region using /setup first.")
 

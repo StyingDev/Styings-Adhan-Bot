@@ -6,8 +6,20 @@ import pytz
 import datetime
 import asyncio
 
-ALADHAN_API_URL = 'http://api.aladhan.com/v1/timingsByCity'
+ALADHAN_API_URL = 'http://api.aladhan.com/v1/timings'
 EMBED_COLOR = 0x757e8a
+
+
+def timings_url_and_params(settings, date_str):
+    """Aladhan coordinate-endpoint URL and query params (aiohttp needs strings)."""
+    return f"{ALADHAN_API_URL}/{date_str}", {
+        'latitude': str(settings["latitude"]),
+        'longitude': str(settings["longitude"]),
+        'method': settings["calculation_method"],
+        'school': settings["asr_method"],
+        'timezonestring': settings["timezone"],
+        'tune': '0,0,0,0,0,0,0,0,0',
+    }
 
 class NotificationsCog(commands.Cog):
     def __init__(self, bot):
@@ -55,20 +67,12 @@ class NotificationsCog(commands.Cog):
         try:
             while user_id in self.loop_notifications:
                 settings = await self.bot.db.get_user(user_id)
-                if not settings:
+                if not settings or settings["latitude"] is None:
                     break
-                params = {
-                    'city': settings["city"],
-                    'country': settings["country"],
-                    'method': settings["calculation_method"],
-                    'timezone': settings["timezone"],
-                    'school': settings["asr_method"],
-                    'tune': '0,0,0,0,0,0,0,0,0',
-                    'date': datetime.datetime.now(user_timezone).strftime('%d-%m-%Y')
-                }
+                url, params = timings_url_and_params(settings, datetime.datetime.now(user_timezone).strftime('%d-%m-%Y'))
 
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(ALADHAN_API_URL, params=params) as response:
+                    async with session.get(url, params=params) as response:
                         data = await response.json()
                         timings = data.get('data', {}).get('timings', {})
 
@@ -144,18 +148,13 @@ class NotificationsCog(commands.Cog):
 
         settings = await self.bot.db.get_user(user_id)
         if settings and settings["timezone"]:
-            params = {
-                'city': settings["city"],
-                'country': settings["country"],
-                'method': settings["calculation_method"],
-                'timezone': settings["timezone"],
-                'school': settings["asr_method"],
-                'tune': '0,0,0,0,0,0,0,0,0',
-                'date': datetime.datetime.now().strftime('%d-%m-%Y')
-            }
+            if settings["latitude"] is None:
+                await interaction.followup.send("Your saved location needs a refresh — please run /setup again.", ephemeral=True)
+                return
+            url, params = timings_url_and_params(settings, datetime.datetime.now().strftime('%d-%m-%Y'))
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(ALADHAN_API_URL, params=params) as response:
+                async with session.get(url, params=params) as response:
                     data = await response.json()
                     timings = data.get('data', {}).get('timings', {})
 
@@ -243,6 +242,9 @@ class NotificationsCog(commands.Cog):
 
         settings = await self.bot.db.get_user(user_id)
         if settings and settings["timezone"]:
+            if settings["latitude"] is None:
+                await interaction.followup.send("Your saved location needs a refresh — please run /setup again.", ephemeral=True)
+                return
             user_timezone = pytz.timezone(settings["timezone"])
 
             loop_task = self.bot.loop.create_task(self.notification_loop(interaction.user, user_timezone))

@@ -19,12 +19,15 @@ Use the information at your own discretion and risk.
 
 ## II) Features
 
-- Setup: Configure your country, city, timezone, Asr timing method, and calculation method.
+- Setup: Configure your country, city, timezone, Asr timing method, and calculation method (auto-detects your timezone).
 - Upcoming Salah: View the next upcoming prayer time for your configured region.
 - Prayer Timings: Display all prayer timings (Fajr, Dhuhr, Asr, Maghrib, Isha) for your region.
-- Notification: Schedule DM notifications for upcoming prayer times.
+- Notification: Schedule DM notifications for upcoming prayer times — notification loops survive bot restarts.
 - Qibla Direction: Get the direction to the Kaaba based on your location.
+- Mosque Finder: Browse nearby mosques with distances and map links, sorted nearest first. Defaults to your saved region, and automatically narrows the search radius in mosque-dense cities.
 - Help Command: List available commands and their usage.
+
+User settings are stored in a local SQLite database (`user_settings.db`), created automatically on first run.
 
 ## III) Commands
 
@@ -32,9 +35,9 @@ Use the information at your own discretion and risk.
 |-----------------|-----------------------------------------------------------------------------|
 | `/help`         | Display help information about commands.                                    |
 | `/setup`        | Set your country, city, timezone, and Asr Method.                           |
-| `/region`       | Display your current region settings, timezone, and Asr method.             |
+| `/settings`     | View and edit your settings (region, Asr/calculation method), or delete your data. |
 | `/qibla`        | Shows the direction to face Qibla from your location.                       |
-| `/mosque`       | Shows nearby mosques for your queried locations.                            |
+| `/mosque`       | Shows nearby mosques (defaults to your saved region, or pass a location).   |
 | `/upcoming`     | Display the next upcoming salah timing.                                     |
 | `/timings`      | Display all the salah timings for the day.                                  |
 | `/notify`       | Set a notification for the next upcoming salah.                             |
@@ -43,10 +46,14 @@ Use the information at your own discretion and risk.
 
 ## IV) Requirements
 
-- Python 3.8+
+- Python 3.9+
 - discord.py
 - aiohttp
+- aiosqlite
+- python-dotenv
 - pytz
+- geopy
+- timezonefinder
 
 ## V) Setup
 

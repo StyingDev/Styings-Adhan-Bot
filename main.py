@@ -28,7 +28,7 @@ async def build_presences():
         discord.CustomActivity(name=f"Watching over {member_count:,} members"),
         discord.CustomActivity(name="/setup to get prayer reminders"),
         discord.CustomActivity(name="Salah is better than sleep"),
-        discord.Game(name="Bot Dev - tr.ee/sty"),
+        discord.CustomActivity(name="Made by tr.ee/sty"),
     ]
     if stats['top_city']:
         presences.insert(5, discord.CustomActivity(name=f"{stats['top_city'].title()} leads with {stats['top_city_users']} believers"))
