@@ -1,3 +1,8 @@
 .env
 user_settings.json
+user_settings.json.migrated
+user_settings.db
+user_settings.db-wal
+user_settings.db-shm
 cogs/__pycache__/
+__pycache__/

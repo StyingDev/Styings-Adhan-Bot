@@ -2,15 +2,23 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import aiohttp
-import math
 import asyncio
+import math
 from typing import Dict, List, Optional
+from urllib.parse import quote
 
 EMBED_COLOR = 0x757e8a
 
 GEOCODING_API_URL = 'https://nominatim.openstreetmap.org/search'
-OVERPASS_API_URL = 'http://overpass-api.de/api/interpreter'
+OVERPASS_ENDPOINTS = [
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://lz4.overpass-api.de/api/interpreter',
+    'https://overpass.openstreetmap.fr/api/interpreter',
+    'http://overpass-api.de/api/interpreter',
+]
 USER_AGENT = 'Adhan-Bot/1.0'
+PAGE_SIZE = 10
+OVERPASS_TIMEOUT = 30
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -26,357 +34,235 @@ def haversine(lat1, lon1, lat2, lon2):
     return R * c
 
 
+def format_distance(km: float) -> str:
+    if km < 1:
+        return f"{km * 1000:.0f} m"
+    return f"{km:.2f} km"
+
+
+class PaginationView(discord.ui.View):
+    """Self-contained paginator: holds the result list and current page,
+    so concurrent searches by the same user can't clobber each other."""
+
+    def __init__(self, user_id: str, query: str, radius_km: float, mosques: List[Dict]):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+        self.query = query
+        self.radius_km = radius_km
+        self.mosques = mosques
+        self.page = 1
+        self.total_pages = (len(mosques) + PAGE_SIZE - 1) // PAGE_SIZE
+        self.message: Optional[discord.Message] = None
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.previous_button.disabled = (self.page <= 1)
+        self.next_button.disabled = (self.page >= self.total_pages)
+        self.page_indicator.label = f"Page {self.page}/{self.total_pages}"
+
+    def build_embed(self) -> discord.Embed:
+        start_idx = (self.page - 1) * PAGE_SIZE
+        lines = [f"Found **{len(self.mosques)}** mosques within **{self.radius_km:g}km** radius\n"]
+
+        for idx, m in enumerate(self.mosques[start_idx:start_idx + PAGE_SIZE], start=start_idx + 1):
+            lat, lon = m['lat'], m['lon']
+            if m['name'] != 'Unnamed Mosque':
+                # Search by name near the coordinates so Google resolves the
+                # actual place card instead of dropping a bare pin
+                google_maps_link = f"https://www.google.com/maps/search/{quote(m['name'], safe='')}/@{lat},{lon},18z"
+            else:
+                google_maps_link = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+            osm_link = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=18/{lat}/{lon}"
+            # Brackets in a name would break the markdown link label
+            name = m['name'].replace('[', '(').replace(']', ')')
+
+            entry = f"**{idx}. [{name}]({google_maps_link})** ➔ {format_distance(m['distance_km'])} · [OSM]({osm_link})"
+            if m['address']:
+                entry += f"\n{m['address'][:100]}"
+            lines.append(entry)
+
+        embed = discord.Embed(
+            title=f"Mosques Near {self.query}",
+            description="\n".join(lines),
+            color=EMBED_COLOR,
+        )
+        embed.set_footer(text=f"Data: OpenStreetMap | Mosque names link to Google Maps")
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if str(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("Only the person who ran the search can change pages.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(1, self.page - 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    @discord.ui.button(label="Page 1/1", style=discord.ButtonStyle.secondary, disabled=True)
+    async def page_indicator(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass  # Always disabled; exists only to show the page count
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = min(self.total_pages, self.page + 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+
 class MosqueCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.user_searches: Dict[str, Dict] = {}
-        self.PAGE_SIZE = 12
+        self.session: Optional[aiohttp.ClientSession] = None
+
+    async def cog_load(self):
+        self.session = aiohttp.ClientSession(headers={'User-Agent': USER_AGENT})
+
+    async def cog_unload(self):
+        if self.session:
+            await self.session.close()
 
     @commands.Cog.listener()
     async def on_ready(self):
         print(f"{__name__} is online")
 
-    def create_mosque_embed(self, query: str, radius_km: float, mosques_page: List[Dict], 
-                           page: int, total_pages: int, total_mosques: int) -> discord.Embed:
-        title = f"Mosques Near {query}"
-        description = f"Found **{total_mosques}** mosques within **{radius_km}km** radius\n"
-        
-        embed = discord.Embed(
-            title=title,
-            description=description,
-            color=EMBED_COLOR,
-        )
-        
-        # Add mosque entries
-        start_idx = (page - 1) * self.PAGE_SIZE
-
-        for idx, m in enumerate(mosques_page, start=start_idx + 1):
-            name = m['name']
-            dist = m['distance_km']
-            addr = (m['address'] or '').strip()
-            lat = m['lat']
-            lon = m['lon']
-            
-            # Format: "1. **Unnamed Mosque | 0.78 km**"
-            field_name = f"{idx}. **{name} | {dist:.2f} km**"
-            
-            value_lines = []
-            
-            if addr:
-                value_lines.append(addr)
-            
-            osm_link = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=18/{lat}/{lon}"
-            google_maps_link = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
-            
-            value_lines.append(f"[View on Maps]({google_maps_link}) | [View on OSM]({osm_link})")
-            
-            embed.add_field(
-                name=field_name,
-                value="\n".join(value_lines),
-                inline=False
-            )
-        
-        footer_text = f"Data: OpenStreetMap | Page - {page}/{total_pages}"
-        embed.set_footer(text=footer_text)
-        
-        return embed
-
-    async def send_paginated_results(self, interaction: discord.Interaction, query: str, radius_km: float, all_mosques: List[Dict], total_mosques: int, original_message: Optional[discord.Message] = None):
-        total_pages = (len(all_mosques) + self.PAGE_SIZE - 1) // self.PAGE_SIZE
-        
-        # Store search data for this user
-        user_id = str(interaction.user.id)
-        self.user_searches[user_id] = {
-            'query': query,
-            'radius_km': radius_km,
-            'all_mosques': all_mosques,
-            'total_mosques': total_mosques,
-            'current_page': 1,
-            'total_pages': total_pages,
-            'message_id': None
-        }
-        
-        # Get first page
-        start_idx = 0
-        end_idx = min(self.PAGE_SIZE, len(all_mosques))
-        page_mosques = all_mosques[start_idx:end_idx]
-        
-        embed = self.create_mosque_embed(query, radius_km, page_mosques, 1, total_pages, total_mosques)
-        
-        # Send or edit message with navigation buttons
-        view = PaginationView(user_id, self)
-        
-        view.previous_button.disabled = True
-        view.next_button.disabled = (total_pages <= 1)
-
-        if original_message is not None:
-            try:
-                await original_message.edit(content=None, embed=embed, view=view)
-                message = original_message
-            except Exception:
-                message = await interaction.followup.send(embed=embed, view=view, wait=True)
-        else:
-            message = await interaction.followup.send(embed=embed, view=view, wait=True)
-        
-        # Store message ID
-        self.user_searches[user_id]['message_id'] = message.id
-
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    @app_commands.command(name='mosque', description='Find mosques near a provided location (location is required).')
-    @app_commands.describe(radius_km='Search radius in kilometers (max 50)', location='Location to search (required)')
-    async def mosque(self, interaction: discord.Interaction, location: str, radius_km: float = 5.0):
+    @app_commands.command(name='mosque', description='Find mosques near a location (defaults to your /setup region).')
+    @app_commands.describe(location='Location to search (defaults to your saved region)', radius_km='Search radius in kilometers (max 50)')
+    async def mosque(self, interaction: discord.Interaction, location: Optional[str] = None, radius_km: float = 5.0):
         await interaction.response.defer()
 
-        # Validate radius
         radius_km = max(0.1, min(50.0, float(radius_km)))
 
-        # Resolve starting coordinates (location is required)
         query = location.strip() if location and location.strip() else None
         if not query:
-            await interaction.followup.send("Please provide a valid `location` to search.", ephemeral=True)
-            return
+            settings = await self.bot.db.get_user(interaction.user.id)
+            if settings:
+                query = f"{settings['city']}, {settings['country']}"
+            else:
+                await interaction.edit_original_response(content="Please provide a `location`, or save your region with `/setup` first.")
+                return
 
         try:
             coords = await self.get_coordinates(query)
-            if not coords:
-                await interaction.followup.send(f"Could not geocode '{query}'. Try a different location.", ephemeral=True)
-                return
-            user_lat, user_lon = coords
         except Exception as e:
-            await interaction.followup.send(f"Error resolving location: {e}", ephemeral=True)
+            await interaction.edit_original_response(content=f"Error resolving location: {e}")
             return
+        if not coords:
+            await interaction.edit_original_response(content=f"Could not geocode '{query}'. Try a different location.")
+            return
+        user_lat, user_lon = coords
 
-        # Query Overpass for mosques within radius
+        await interaction.edit_original_response(content=f"Searching for mosques within {radius_km:g}km of **{query}**... This may take a moment.")
+
+        # nwr covers nodes, ways and relations; "out center" returns a single
+        # center point per way/relation, so no member-node recursion is needed
         radius_m = int(radius_km * 1000)
         overpass_query = f"""
-[out:json][timeout:45];
+[out:json][timeout:{OVERPASS_TIMEOUT}];
 (
-  node["amenity"="place_of_worship"]["religion"="muslim"](around:{radius_m},{user_lat},{user_lon});
-  node["building"="mosque"](around:{radius_m},{user_lat},{user_lon});
-  node["amenity"="mosque"](around:{radius_m},{user_lat},{user_lon});
-  way["amenity"="place_of_worship"]["religion"="muslim"](around:{radius_m},{user_lat},{user_lon});
-  way["building"="mosque"](around:{radius_m},{user_lat},{user_lon});
-  way["amenity"="mosque"](around:{radius_m},{user_lat},{user_lon});
-);
-(
-  ._;
-  >;
+  nwr["amenity"="place_of_worship"]["religion"="muslim"](around:{radius_m},{user_lat},{user_lon});
+  nwr["building"="mosque"](around:{radius_m},{user_lat},{user_lon});
+  nwr["amenity"="mosque"](around:{radius_m},{user_lat},{user_lon});
 );
 out center;
 """
 
-        headers = {'User-Agent': USER_AGENT, 'Accept': 'application/json'}
-        
-        processing_msg = await interaction.followup.send(f"Searching for mosques within {radius_km}km of **{query}**... This may take a moment.", ephemeral=False, wait=True)
-        
-        async def query_overpass_fallback():
-            last_exc = None
-            async with aiohttp.ClientSession() as session:
-                endpoints = [
-                    'https://overpass.kumi.systems/api/interpreter',
-                    'https://lz4.overpass-api.de/api/interpreter',
-                    'https://overpass.openstreetmap.fr/api/interpreter',
-                    OVERPASS_API_URL
-                ]
-                
-                for endpoint in endpoints:
-                    for attempt in range(3):
-                        try:
-                            async with session.post(endpoint, data=overpass_query, headers=headers, timeout=90) as resp:
-                                if resp.status == 200:
-                                    return await resp.json()
-                                if resp.status in (429, 502, 503, 504):
-                                    last_exc = Exception(f"Overpass returned status {resp.status}")
-                                else:
-                                    text = await resp.text()
-                                    raise Exception(f"Overpass returned status {resp.status}: {text[:200]}")
-                        except asyncio.TimeoutError:
-                            last_exc = Exception(f"Timeout querying {endpoint}")
-                        except aiohttp.ClientError as exc:
-                            last_exc = exc
-                        await asyncio.sleep(2 ** attempt)
-            raise last_exc or Exception("Overpass query failed for all endpoints")
-
         try:
-            res = await query_overpass_fallback()
+            res = await self.query_overpass(overpass_query)
         except Exception as e:
-            try:
-                await processing_msg.edit(content=f"Error querying OpenStreetMap Overpass API: {e}. Try again later or reduce the radius.", embed=None, view=None)
-            except Exception:
-                await interaction.followup.send(f"Error querying OpenStreetMap Overpass API: {e}. Try again later or reduce the radius.", ephemeral=True)
+            await interaction.edit_original_response(content=f"Error querying OpenStreetMap Overpass API: {e}. Try again later or reduce the radius.")
             return
 
-        elements = res.get('elements', [])
-        
-        if not elements:
-            try:
-                await processing_msg.edit(content=f"No mosques found within {radius_km} km of {query}.", embed=None, view=None)
-            except Exception:
-                await interaction.followup.send(f"No mosques found within {radius_km} km of {query}.", ephemeral=False)
+        mosques = self.parse_mosques(res.get('elements', []), user_lat, user_lon)
+
+        if not mosques:
+            await interaction.edit_original_response(content=f"No mosques found within {radius_km:g} km of {query}.")
             return
 
-        # Process and deduplicate mosques
+        view = PaginationView(str(interaction.user.id), query, radius_km, mosques)
+        view.message = await interaction.edit_original_response(content=None, embed=view.build_embed(), view=view)
+
+    async def query_overpass(self, overpass_query: str):
+        """Try each Overpass mirror once; any failure moves on to the next.
+
+        Mirrors differ in rate limits and access policies (e.g. some 403
+        non-whitelisted clients), so no status is treated as fatal.
+        """
+        last_exc = None
+        timeout = aiohttp.ClientTimeout(total=OVERPASS_TIMEOUT + 5)
+
+        for endpoint in OVERPASS_ENDPOINTS:
+            try:
+                async with self.session.post(endpoint, data=overpass_query, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    text = await resp.text()
+                    last_exc = Exception(f"Overpass returned status {resp.status}: {text[:200]}")
+            except asyncio.TimeoutError:
+                last_exc = Exception(f"Timeout querying {endpoint}")
+            except aiohttp.ClientError as exc:
+                last_exc = exc
+        raise last_exc or Exception("Overpass query failed for all endpoints")
+
+    @staticmethod
+    def parse_mosques(elements: List[Dict], user_lat: float, user_lon: float) -> List[Dict]:
+        """Turn raw Overpass elements into a deduplicated, distance-sorted list."""
         mosques = []
         seen_coords = set()
-        
+
         for el in elements:
             tags = el.get('tags', {})
-            name = tags.get('name', 'Unnamed Mosque')
-            
-            # Get coordinates
-            lat = None
-            lon = None
-            
-            if el.get('type') == 'node' and 'lat' in el and 'lon' in el:
-                lat = el['lat']
-                lon = el['lon']
-            elif el.get('center'):
-                lat = el['center'].get('lat')
-                lon = el['center'].get('lon')
-            elif 'lat' in el and 'lon' in el:
-                lat = el.get('lat')
-                lon = el.get('lon')
-            
+            if not tags:
+                continue
+
+            center = el.get('center', el)
+            lat = center.get('lat')
+            lon = center.get('lon')
             if lat is None or lon is None:
                 continue
-            
-            coord_key = f"{round(lat, 6)},{round(lon, 6)}"
+
+            # ~11m grid: merges the same mosque mapped as both a node and a building
+            coord_key = (round(lat, 4), round(lon, 4))
             if coord_key in seen_coords:
                 continue
             seen_coords.add(coord_key)
-            
-            dist = haversine(user_lat, user_lon, lat, lon)
-            
-            # Build address
-            addr_parts = []
-            for k in ('addr:street', 'addr:housenumber', 'addr:city', 'addr:postcode', 'addr:country'):
-                if tags.get(k):
-                    addr_parts.append(tags.get(k))
+
+            addr_parts = [tags[k] for k in ('addr:street', 'addr:housenumber', 'addr:city', 'addr:postcode', 'addr:country') if tags.get(k)]
             address = ", ".join(addr_parts) if addr_parts else tags.get('addr:full') or tags.get('description') or ''
-            
+
             mosques.append({
-                'name': name,
+                'name': tags.get('name') or tags.get('name:en') or 'Unnamed Mosque',
                 'lat': lat,
                 'lon': lon,
-                'distance_km': dist,
+                'distance_km': haversine(user_lat, user_lon, lat, lon),
                 'address': address,
             })
-        
+
         mosques.sort(key=lambda x: x['distance_km'])
-                
-        await self.send_paginated_results(interaction, query, radius_km, mosques, len(elements), original_message=processing_msg)
-
-    async def update_page(self, user_id: str, channel: discord.TextChannel, page: int):
-        # Update the embed for a specific page
-
-        if user_id not in self.user_searches:
-            return False
-        
-        data = self.user_searches[user_id]
-        
-        if page < 1 or page > data['total_pages']:
-            return False
-        
-        data['current_page'] = page
-        
-        start_idx = (page - 1) * self.PAGE_SIZE
-        end_idx = min(start_idx + self.PAGE_SIZE, len(data['all_mosques']))
-        page_mosques = data['all_mosques'][start_idx:end_idx]
-        
-        embed = self.create_mosque_embed(
-            data['query'],
-            data['radius_km'],
-            page_mosques,
-            page,
-            data['total_pages'],
-            data['total_mosques']
-        )
-        
-        try:
-            message = await channel.fetch_message(data['message_id'])
-            view = PaginationView(user_id, self)
-            view.previous_button.disabled = (page <= 1)
-            view.next_button.disabled = (page >= data['total_pages'])
-            await message.edit(embed=embed, view=view)
-            return True
-        except discord.NotFound:
-            del self.user_searches[user_id]
-            return False
-        except Exception as e:
-            print(f"Error updating page: {e}")
-            return False
-
-    async def cleanup_search(self, user_id: str):
-        """Clean up search data for a user."""
-        if user_id in self.user_searches:
-            del self.user_searches[user_id]
+        return mosques
 
     async def get_coordinates(self, query: str):
         params = {'q': query, 'format': 'json', 'limit': 1}
-        headers = {'User-Agent': USER_AGENT}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(GEOCODING_API_URL, params=params, headers=headers) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
-                if data and len(data) > 0:
-                    return float(data[0]['lat']), float(data[0]['lon'])
+        async with self.session.get(GEOCODING_API_URL, params=params) as resp:
+            if resp.status != 200:
                 return None
-
-
-class PaginationView(discord.ui.View):
-    # View for pagination controls
-    def __init__(self, user_id: str, cog: MosqueCog):
-        super().__init__(timeout=300)
-        self.user_id = user_id
-        self.cog = cog
-    
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return str(interaction.user.id) == self.user_id
-    
-    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
-    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data = self.cog.user_searches.get(self.user_id)
-        if not data:
-            await interaction.response.send_message("This search session has expired.", ephemeral=True)
-            return
-        
-        if data['current_page'] > 1:
-            success = await self.cog.update_page(self.user_id, interaction.channel, data['current_page'] - 1)
-            if success:
-                await interaction.response.defer()
-            else:
-                await interaction.response.send_message("Failed to update page.", ephemeral=True)
-        else:
-            await interaction.response.defer()
-    
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
-    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data = self.cog.user_searches.get(self.user_id)
-        if not data:
-            await interaction.response.send_message("This search session has expired.", ephemeral=True)
-            return
-        
-        if data['current_page'] < data['total_pages']:
-            success = await self.cog.update_page(self.user_id, interaction.channel, data['current_page'] + 1)
-            if success:
-                await interaction.response.defer()
-            else:
-                await interaction.response.send_message("Failed to update page.", ephemeral=True)
-        else:
-            await interaction.response.defer()
-    
-    async def on_timeout(self):
-        await self.cog.cleanup_search(self.user_id)
-        
-        for child in self.children:
-            child.disabled = True
-        
-        try:
-            await self.message.edit(view=self)
-        except:
-            pass
+            data = await resp.json()
+            if data and len(data) > 0:
+                return float(data[0]['lat']), float(data[0]['lon'])
+            return None
 
 
 async def setup(bot):

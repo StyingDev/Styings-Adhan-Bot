@@ -1,18 +1,15 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import json
 from timezonefinder import TimezoneFinder
 from geopy.geocoders import Nominatim
 
-# Default values
 DEFAULT_ASR_METHOD = '1'
 DEFAULT_CALC_METHOD = '2'
 
 geolocator = Nominatim(user_agent="discord_prayer_bot")
 tf = TimezoneFinder()
 
-# Calculation Methods
 calculation_methods = {
     '1': 'University of Islamic Sciences, Karachi (Recommended)',
     '2': 'Islamic Society of North America (ISNA)',
@@ -29,7 +26,6 @@ calculation_methods = {
     '14': 'Spiritual Administration of Muslims of Russia',
 }
 
-# Embed color
 EMBED_COLOR = 0x757e8a
 
 
@@ -48,9 +44,8 @@ class AsrMethodSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
-        self.view.bot.user_settings[user_id]["asr_method"] = self.values[0]
-        await self.view.bot.save_settings()
-        
+        await self.view.bot.db.update_user(user_id, asr_method=self.values[0])
+
         await interaction.response.edit_message(
             content="Asr timing method set. Now, please select your calculation method:",
             view=CalculationMethodView(self.view.bot)
@@ -69,9 +64,8 @@ class CalculationMethodSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
-        self.view.bot.user_settings[user_id]["calculation_method"] = self.values[0]
-        await self.view.bot.save_settings()
-        
+        await self.view.bot.db.update_user(user_id, calculation_method=self.values[0])
+
         await interaction.response.edit_message(
             content="Setup complete! Your settings have been saved.",
             view=None,
@@ -113,23 +107,22 @@ class SetupModal(discord.ui.Modal):
             location = geolocator.geocode(location_query)
             
             if location:
-                
                 timezone_str = tf.timezone_at(lng=location.longitude, lat=location.latitude)
             else:
-                timezone_str = "UTC"  # Fallback
-                
+                timezone_str = "UTC"
+
         except Exception as e:
             print(f"Error detecting timezone: {e}")
             timezone_str = "UTC"
 
-        self.bot.user_settings[user_id] = {
-            "country": self.country.value,
-            "city": self.city.value,
-            "timezone": timezone_str,
-            "asr_method": DEFAULT_ASR_METHOD,
-            "calculation_method": DEFAULT_CALC_METHOD
-        }
-        await self.bot.save_settings()
+        await self.bot.db.upsert_user(
+            user_id,
+            country=self.country.value,
+            city=self.city.value,
+            timezone=timezone_str,
+            asr_method=DEFAULT_ASR_METHOD,
+            calculation_method=DEFAULT_CALC_METHOD
+        )
 
         await interaction.followup.send(
             f"Detected Timezone: **{timezone_str}**\n-# if this timezone is **incorrect** do /setup again with proper location names.\n-# This is important for /notify commands.\n\nNow, please select your Asr timing method:",
@@ -157,12 +150,13 @@ class SetupCog(commands.Cog):
     @app_commands.command(name='region', description='View your current set region and timezone.')
     async def region(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
-        if user_id in self.bot.user_settings:
-            country = self.bot.user_settings[user_id]["country"]
-            city = self.bot.user_settings[user_id]["city"]
-            timezone = self.bot.user_settings[user_id]["timezone"]
-            asr_method = "Hanafi juristic (Recommended)" if self.bot.user_settings[user_id]["asr_method"] == '1' else "Standard (Shafi'i, Maliki, and Hanbali)"
-            calc_method = calculation_methods[self.bot.user_settings[user_id]["calculation_method"]]
+        settings = await self.bot.db.get_user(user_id)
+        if settings:
+            country = settings["country"]
+            city = settings["city"]
+            timezone = settings["timezone"]
+            asr_method = "Hanafi juristic (Recommended)" if settings["asr_method"] == '1' else "Standard (Shafi'i, Maliki, and Hanbali)"
+            calc_method = calculation_methods[settings["calculation_method"]]
             embed = discord.Embed(title="Current Region Settings", description=f"Country: {country}\nCity: {city}\nTimezone: {timezone}\nAsr Method: {asr_method}\nCalculation Method: {calc_method}", color=EMBED_COLOR)
             embed.set_footer(text="⚙️ To change your preferences do /setup")
             await interaction.response.send_message(embed=embed, ephemeral=True)

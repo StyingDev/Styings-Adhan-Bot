@@ -2,7 +2,6 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-# Embed color
 EMBED_COLOR = 0x757e8a
 
 class HelpCog(commands.Cog):
@@ -27,7 +26,7 @@ class HelpCog(commands.Cog):
         embed.add_field(name="/notifyloop", value="Set a notification chain for all upcoming salahs.", inline=False)
         embed.add_field(name="/notifyloopstop", value="Stop the notification chain for upcoming salahs.", inline=False)
         embed.add_field(name="/qibla", value="Get the Qibla direction from your location.", inline=False)
-        embed.add_field(name="/mosque", value="Find mosques near a provided location.", inline=False)
+        embed.add_field(name="/mosque", value="Find mosques near a location (defaults to your /setup region).", inline=False)
 
         await interaction.response.send_message(embed=embed)
 

@@ -1,4 +1,5 @@
 aiohttp
+aiosqlite
 discord
 discord.py
 python-dotenv
