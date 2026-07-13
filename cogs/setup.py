@@ -91,7 +91,46 @@ class CalculationMethodSelect(discord.ui.Select):
         await self.view.bot.db.update_user(user_id, calculation_method=self.values[0])
 
         await interaction.response.edit_message(
-            content="Setup complete! Your settings have been saved.",
+            content="Calculation method set. One last thing, do you want a DM at every salah time?",
+            view=NotifyPromptView(self.view.bot),
+        )
+
+
+class NotifyPromptView(discord.ui.View):
+    """Final step of /setup: opt in to the per-salah notification loop."""
+
+    def __init__(self, bot):
+        super().__init__(timeout=180)
+        self.bot = bot
+
+    @discord.ui.button(label="Yes, notify me", style=discord.ButtonStyle.success)
+    async def enable(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = str(interaction.user.id)
+        settings = await self.bot.db.get_user(user_id)
+        notifications = self.bot.get_cog("NotificationsCog")
+
+        if settings and notifications:
+            notifications.start_loop_for(interaction.user, settings)
+            await self.bot.db.update_user(user_id, notify_loop_active=True)
+            await interaction.response.edit_message(
+                content=f"Setup complete! You'll receive a DM at every salah time for {settings['city']}. Use /notifyloopstop anytime to turn this off.",
+                view=None,
+            )
+        else:
+            await interaction.response.edit_message(
+                content="Setup complete! Notifications couldn't be enabled automatically — use /notifyloop to turn them on.",
+                view=None,
+            )
+
+    @discord.ui.button(label="No thanks", style=discord.ButtonStyle.secondary)
+    async def skip(self, interaction: discord.Interaction, button: discord.ui.Button):
+        notifications = self.bot.get_cog("NotificationsCog")
+        if notifications:
+            existing = notifications.loop_notifications.get(str(interaction.user.id))
+            if existing and not existing.done():
+                existing.cancel()
+        await interaction.response.edit_message(
+            content="Setup complete! Your settings have been saved. You can enable per-salah DMs anytime with /notifyloop.",
             view=None,
         )
 

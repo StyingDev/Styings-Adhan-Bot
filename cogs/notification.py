@@ -149,7 +149,7 @@ class NotificationsCog(commands.Cog):
         settings = await self.bot.db.get_user(user_id)
         if settings and settings["timezone"]:
             if settings["latitude"] is None:
-                await interaction.followup.send("Your saved location needs a refresh — please run /setup again.", ephemeral=True)
+                await interaction.followup.send("Your saved location needs a refresh, please run /setup again.", ephemeral=True)
                 return
             url, params = timings_url_and_params(settings, datetime.datetime.now().strftime('%d-%m-%Y'))
 
@@ -228,6 +228,18 @@ class NotificationsCog(commands.Cog):
                 pass
 
 
+    def start_loop_for(self, user, settings):
+        """Start the per-salah DM loop for a user unless one is already running.
+
+        Shared by /notifyloop and the opt-in prompt at the end of /setup.
+        """
+        user_id = str(user.id)
+        existing = self.loop_notifications.get(user_id)
+        if existing and not existing.done():
+            return
+        user_timezone = pytz.timezone(settings["timezone"])
+        self.loop_notifications[user_id] = self.bot.loop.create_task(self.notification_loop(user, user_timezone))
+
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @app_commands.command(name='notifyloop', description='Set a notification chain for all upcoming salahs.')
@@ -243,12 +255,9 @@ class NotificationsCog(commands.Cog):
         settings = await self.bot.db.get_user(user_id)
         if settings and settings["timezone"]:
             if settings["latitude"] is None:
-                await interaction.followup.send("Your saved location needs a refresh — please run /setup again.", ephemeral=True)
+                await interaction.followup.send("Your saved location needs a refresh, please run /setup again.", ephemeral=True)
                 return
-            user_timezone = pytz.timezone(settings["timezone"])
-
-            loop_task = self.bot.loop.create_task(self.notification_loop(interaction.user, user_timezone))
-            self.loop_notifications[user_id] = loop_task
+            self.start_loop_for(interaction.user, settings)
 
             await self.bot.db.update_user(user_id, notify_loop_active=True)
 

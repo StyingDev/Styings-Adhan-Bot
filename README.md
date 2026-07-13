@@ -2,6 +2,8 @@
 
 Stying's Adhan Bot is a Discord bot designed to provide prayer timings and reminders based on user preferences.
 
+[Invite the Bot!](https://discord.com/oauth2/authorize?client_id=1229836097702596679&permissions=277025441856&scope=bot)
+
 <img width="425" height="173" alt="image" src="https://github.com/user-attachments/assets/3fb8f00e-ebc0-462a-81ad-b4ee4f765472" />
 
 
@@ -20,7 +22,7 @@ Use the information at your own discretion and risk.
 - Setup: Configure your country, city, timezone, Asr timing method, and calculation method (auto-detects your timezone).
 - Upcoming Salah: View the next upcoming prayer time for your configured region.
 - Prayer Timings: Display all prayer timings (Fajr, Dhuhr, Asr, Maghrib, Isha) for your region.
-- Notification: Schedule DM notifications for upcoming prayer times — notification loops survive bot restarts.
+- Notification: Schedule DM notifications for upcoming prayer times, notification loops survive bot restarts.
 - Qibla Direction: Get the direction to the Kaaba based on your location.
 - Mosque Finder: Browse nearby mosques with distances and map links, sorted nearest first. Defaults to your saved region, and automatically narrows the search radius in mosque-dense cities.
 - Help Command: List available commands and their usage.
@@ -42,6 +44,7 @@ User settings are stored in a local SQLite database (`user_settings.db`), create
 | `/notify`       | Set a notification for the next upcoming salah.                             |
 | `/notifyloop`   | Set a notification chain for the next upcoming salahs.                      |
 | `/notifyloopstop` | Stop the notification chain for the next upcoming salahs.                 |
+| `/support`      | Support the development of the bot.                                          |
 
 ## IV) Requirements
 

@@ -301,7 +301,7 @@ class CalendarView(discord.ui.View):
         month, year = (1, self.year + 1) if self.month == 12 else (self.month + 1, self.year)
         await self.show_month(interaction, month, year)
 
-    @discord.ui.button(label="Learn More", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Learn more", style=discord.ButtonStyle.secondary, row=0)
     async def events_info(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(embed=build_events_embed(self.days), ephemeral=True)
 
