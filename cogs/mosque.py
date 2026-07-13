@@ -114,7 +114,7 @@ class PaginationView(discord.ui.View):
 
     @discord.ui.button(label="Page 1/1", style=discord.ButtonStyle.secondary, disabled=True)
     async def page_indicator(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pass  # Always disabled; exists only to show the page count
+        pass
 
     @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -123,11 +123,9 @@ class PaginationView(discord.ui.View):
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
     async def on_timeout(self):
-        for child in self.children:
-            child.disabled = True
         if self.message:
             try:
-                await self.message.edit(view=self)
+                await self.message.edit(view=None)
             except discord.HTTPException:
                 pass
 

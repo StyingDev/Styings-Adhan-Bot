@@ -306,11 +306,9 @@ class CalendarView(discord.ui.View):
         await interaction.response.send_message(embed=build_events_embed(self.days), ephemeral=True)
 
     async def on_timeout(self):
-        for child in self.children:
-            child.disabled = True
         if self.message:
             try:
-                await self.message.edit(view=self)
+                await self.message.edit(view=None)
             except discord.HTTPException:
                 pass
 

@@ -51,7 +51,9 @@ async def before_rotate_presence():
 async def on_ready():
     if not rotate_presence.is_running():
         rotate_presence.start()
-    await bot.tree.sync()
+    if not getattr(bot, 'synced', False):
+        await bot.tree.sync()
+        bot.synced = True
     print(f'We have logged in as {bot.user.name}')
 
 async def load():

@@ -16,8 +16,8 @@ COMMAND_CATEGORIES = [
     ("II)", "Prayer Times", [
         ("upcoming", "Your next salah",
          "Shows the next upcoming salah and its time for your region."),
-        ("timings", "All of today's timings",
-         "All five prayer times for today in your region."),
+        ("timings", "Browse prayer timings",
+         "All five prayer times, defaulting to today. Use the arrows to move between days, and switch to weekly or monthly view with the dropdown."),
     ]),
     ("III)", "Notifications", [
         ("notify", "One-off reminder",
@@ -44,7 +44,7 @@ COMMAND_CATEGORIES = [
 
 def build_overview_embed(bot: commands.Bot, mentions: Dict[str, str]) -> discord.Embed:
     embed = discord.Embed(
-        title="Adhan Bot Help",
+        title="Waqt Bot Help",
         description=(
             "Prayer times, salah reminders, qibla, mosque finder and the Hijri calendar within in Discord.\n\n"
             f"**Quick start**\n"
@@ -116,12 +116,12 @@ class HelpView(discord.ui.View):
         return True
 
     async def on_timeout(self):
-        for child in self.children:
-            if not isinstance(child, discord.ui.Button):
-                child.disabled = True
+        # Drop the dead dropdown but keep the Patreon link button working
         if self.message:
+            link_only = discord.ui.View()
+            link_only.add_item(discord.ui.Button(label="Support on Patreon", style=discord.ButtonStyle.link, url=PATREON_URL, emoji="💖"))
             try:
-                await self.message.edit(view=self)
+                await self.message.edit(view=link_only)
             except discord.HTTPException:
                 pass
 
