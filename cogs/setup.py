@@ -246,6 +246,7 @@ def asr_method_label(value: str) -> str:
 
 
 def build_settings_embed(settings) -> discord.Embed:
+    notify_status = "ON" if settings['notify_loop_active'] else "OFF"
     embed = discord.Embed(
         title="Your Settings",
         description=(
@@ -253,11 +254,12 @@ def build_settings_embed(settings) -> discord.Embed:
             f"City: {settings['city']}\n"
             f"Timezone: {settings['timezone']}\n"
             f"Asr Method: {asr_method_label(settings['asr_method'])}\n"
-            f"Calculation Method: {calculation_methods.get(settings['calculation_method'], 'Unknown')}"
+            f"Calculation Method: {calculation_methods.get(settings['calculation_method'], 'Unknown')}\n"
+            f"Notifications: {notify_status}"
         ),
         color=EMBED_COLOR,
     )
-    embed.set_footer(text="⚙️ Edit any setting below")
+    embed.set_footer(text="Edit any setting below")
     return embed
 
 
@@ -350,6 +352,12 @@ class SettingsView(discord.ui.View):
         self.message = None
         self.add_item(SettingsAsrSelect(settings['asr_method']))
         self.add_item(SettingsCalcSelect(settings['calculation_method']))
+        self._update_notify_button(settings['notify_loop_active'])
+
+    def _update_notify_button(self, active: bool):
+
+        self.notify_toggle.label = "Pause Notifications" if active else "Resume Notifications"
+        self.notify_toggle.style = discord.ButtonStyle.secondary if active else discord.ButtonStyle.success
 
     async def refresh(self, interaction: discord.Interaction):
         """Re-render the panel with fresh settings and dropdown defaults."""
@@ -362,6 +370,31 @@ class SettingsView(discord.ui.View):
                 await self.message.edit(embed=embed, view=view)
         else:
             await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Notifications", style=discord.ButtonStyle.success, row=2)
+    async def notify_toggle(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = str(interaction.user.id)
+        notifications = self.bot.get_cog("NotificationsCog")
+        active = (await self.bot.db.get_user(user_id))['notify_loop_active']
+
+        if active:
+            # Stop the loop
+            existing = notifications.loop_notifications.get(user_id)
+            if existing and not existing.done():
+                existing.cancel()
+            await self.bot.db.update_user(user_id, notify_loop_active=False)
+            await interaction.response.send_message("Notifications paused.", ephemeral=True)
+        else:
+            # Start the loop
+            settings = await self.bot.db.get_user(user_id)
+            if not settings or not settings["latitude"]:
+                await interaction.response.send_message("Set up your region with /setup first.", ephemeral=True)
+                return
+            notifications.start_loop_for(interaction.user, settings)
+            await self.bot.db.update_user(user_id, notify_loop_active=True)
+            await interaction.response.send_message("Notifications resumed. You'll be DM'd at each salah.", ephemeral=True)
+
+        await self.refresh(interaction)
 
     @discord.ui.button(label="Edit Region", style=discord.ButtonStyle.primary, row=2)
     async def edit_region(self, interaction: discord.Interaction, button: discord.ui.Button):
