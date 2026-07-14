@@ -4,5 +4,6 @@ user_settings.json.migrated
 user_settings.db
 user_settings.db-wal
 user_settings.db-shm
+user_settings.db.bak
 cogs/__pycache__/
 __pycache__/

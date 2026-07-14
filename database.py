@@ -115,25 +115,51 @@ class Database:
             return (await cursor.fetchone())[0]
 
     async def get_stats(self):
-        """Aggregate numbers for presence displays."""
+        """Aggregate numbers for presence displays.
+
+        Cities are clustered by coordinate cells (~11 km grid) rather than by
+        the stored text, so spelling variants of the same place count once.
+        """
         async with self._db.execute(
             """
             SELECT COUNT(*),
                    COUNT(DISTINCT LOWER(TRIM(country))),
-                   COUNT(DISTINCT LOWER(TRIM(city))),
                    COALESCE(SUM(notify_loop_active), 0)
             FROM user_settings
             """
         ) as cursor:
-            users, countries, cities, active_loops = await cursor.fetchone()
+            users, countries, active_loops = await cursor.fetchone()
+
+        async with self._db.execute(
+            """
+            SELECT COUNT(DISTINCT ROUND(latitude, 1) || ',' || ROUND(longitude, 1))
+            FROM user_settings WHERE latitude IS NOT NULL
+            """
+        ) as cursor:
+            cities = (await cursor.fetchone())[0]
 
         top_city, top_city_users = None, 0
         async with self._db.execute(
-            "SELECT city, COUNT(*) FROM user_settings GROUP BY LOWER(TRIM(city)) ORDER BY COUNT(*) DESC LIMIT 1"
+            """
+            SELECT ROUND(latitude, 1) AS cell_lat, ROUND(longitude, 1) AS cell_lon, COUNT(*) AS c
+            FROM user_settings WHERE latitude IS NOT NULL
+            GROUP BY cell_lat, cell_lon
+            ORDER BY c DESC LIMIT 1
+            """
         ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                top_city, top_city_users = row
+            cell = await cursor.fetchone()
+        if cell:
+            top_city_users = cell['c']
+
+            async with self._db.execute(
+                """
+                SELECT city FROM user_settings
+                WHERE ROUND(latitude, 1) = ? AND ROUND(longitude, 1) = ?
+                GROUP BY LOWER(TRIM(city)) ORDER BY COUNT(*) DESC LIMIT 1
+                """,
+                (cell['cell_lat'], cell['cell_lon']),
+            ) as cursor:
+                top_city = (await cursor.fetchone())['city']
 
         return {
             'users': users,
